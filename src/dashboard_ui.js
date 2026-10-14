@@ -1,22 +1,30 @@
 const dashboardContext = {distance: "im", gender: "Male", ageGroup: "30-34"};
 const qualificationAssumptions = {mode: "strict", extraPlaces: 0, legacyExtraPlaces: 0, fallback: false};
 let dashboardReturnView = null;
-const cutoffLabels = {strict: "Strict allocation", places: "Manual extra places", reported: "Reported last accepted", density: "Density estimate", scan: "15-absence scan"};
+const cutoffLabels = {strict: "Strict allocation", places: "Manual extra places", reported: "Reported last accepted", density: "Match-density boundary", scan: "15-absence scan"};
+const cutoffApproaches = [
+  {mode: "strict", label: cutoffLabels.strict, color: "#006d77"},
+  {mode: "places", label: cutoffLabels.places, color: "#e76f51"},
+  {mode: "reported", label: cutoffLabels.reported, color: "#495057"},
+  {mode: "density", label: cutoffLabels.density, color: "#b08900"},
+  {mode: "scan", label: cutoffLabels.scan, color: "#277da1"},
+];
 const dashboardWorkspaces = {
   explorer: {label: "Race Explorer", views: ["statistics", "overall", "splits"]},
   compare: {label: "Compare Races", views: ["compare"]},
-  qualification: {label: "Qualification", views: ["qualification", "easiest", "odds", "kona"]},
+  qualification: {label: "Qualification", views: ["qualification", "easiest", "odds", "kona", "crossrace"]},
   course: {label: "Course Analysis", views: ["experimental"]},
 };
 const dashboardViewLabels = {
   statistics: "Participation", overall: "Finish Times", splits: "Athletes & Splits",
   compare: "Race Comparison", qualification: "Race Targets", easiest: "Race Finder",
-  odds: "Historical Target Hits", kona: "Kona Evidence", experimental: "Course & Conditions",
+  odds: "Historical Target Hits", kona: "Kona Evidence", crossrace: "Cross-race Analysis",
+  experimental: "Course & Conditions",
 };
 const contextControlIds = {
   distance: ["oddsDistance", "easiestDistance", "experimentalDistance", "compareSplitDistance", "compareStatisticsDistance", "compareScatterDistance", "compareFieldDistance", "compareSlotDistance"],
-  gender: ["qualificationGender", "oddsGender", "easiestGender", "experimentalGender", "compareImGender", "compare703Gender", "compareScatterGender", "konaGender", "compareFieldGender"],
-  ageGroup: ["qualificationAgeGroup", "oddsAgeGroup", "easiestAgeGroup", "experimentalAgeGroup", "compareImAgeGroup", "compare703AgeGroup", "compareScatterAgeGroup", "compareFieldAgeGroup", "konaAgeGroup"],
+  gender: ["qualificationGender", "oddsGender", "easiestGender", "compareImGender", "compare703Gender", "compareScatterGender", "konaGender", "compareFieldGender"],
+  ageGroup: ["qualificationAgeGroup", "oddsAgeGroup", "easiestAgeGroup", "compareImAgeGroup", "compare703AgeGroup", "compareScatterAgeGroup", "compareFieldAgeGroup", "konaAgeGroup"],
 };
 let activeWorkspace = "explorer";
 const workspaceLastView = {explorer: "splits", compare: "compare", qualification: "qualification", course: "experimental"};
@@ -38,20 +46,54 @@ function activateDashboardView(view) {
   const entry = Object.entries(dashboardWorkspaces).find(([, workspace]) => workspace.views.includes(view));
   activeWorkspace = entry[0];
   workspaceLastView[activeWorkspace] = view;
-  document.querySelector(`.legacy-tabs [data-tab="${view}"]`).click();
+  const legacyButton = document.querySelector(`.legacy-tabs [data-tab="${view}"]`);
+  if (legacyButton) legacyButton.click();
+  else {
+    activeTab = view;
+    document.querySelectorAll(".tab-panel").forEach(panel => panel.classList.toggle("active", panel.id === `${view}Panel`));
+  }
   renderWorkspaceNavigation();
   updateDashboardScope();
   decorateDashboard();
 }
 
+function clearDashboardReturn() {
+  dashboardReturnView = null;
+  document.getElementById("contextReturn").hidden = true;
+}
+
+function updateExtraPlacesControls() {
+  const konaView = activeTab === "kona";
+  const qualificationView = ["qualification", "easiest", "odds", "crossrace"].includes(activeTab);
+  const trace = konaView ? selectedKonaTrace() : null;
+  const poolAvailable = dashboardContext.distance === "im" && (konaView
+    ? trace?.slot_scope === "gender" : qualificationView && qualificationSystem === "current");
+  const legacyAvailable = dashboardContext.distance === "im" && (konaView
+    ? trace?.slot_scope === "age group" : qualificationView && qualificationSystem === "historical");
+  for (const [id, available] of [["contextExtraPlaces", poolAvailable], ["contextLegacyPlaces", legacyAvailable]]) {
+    const control = document.getElementById(id);
+    control.closest("label").hidden = !available;
+    control.disabled = !available;
+  }
+}
+
 function updateDashboardScope() {
   const allAthletes = ["splits", "overall", "statistics"].includes(activeTab);
+  const qualificationView = ["qualification", "easiest", "odds", "crossrace"].includes(activeTab);
   const cycle = selectedKonaTrace()?.year || "2026";
-  document.querySelector(".assumption-fields").hidden = allAthletes || ["kona", "compare"].includes(activeTab);
+  const konaView = activeTab === "kona";
+  const trace = selectedKonaTrace();
+  document.querySelector(".assumption-fields").hidden = !qualificationView && !konaView;
+  document.querySelector(".qualification-approach").hidden = !qualificationView;
+  document.getElementById("contextFallback").closest("label").hidden = konaView;
+  updateExtraPlacesControls();
+  document.querySelector("#contextGender").closest("label").hidden = activeTab === "experimental";
+  document.querySelector("#contextAgeGroup").closest("label").hidden = activeTab === "experimental";
+  document.querySelector(".context-fields:not(.assumption-fields)").hidden = allAthletes || ["kona", "compare"].includes(activeTab);
   for (const [id, distance] of [["compareImDistribution", "im"], ["compare703Distribution", "703"], ["compareImQualification", "im"], ["compare703Qualification", "703"]]) {
     document.getElementById(id).closest(".chart-panel").hidden = dashboardContext.distance !== distance;
   }
-  document.getElementById("eventTitle").textContent = allAthletes || activeTab === "qualification"
+  document.getElementById("eventTitle").textContent = allAthletes || ["qualification", "crossrace"].includes(activeTab)
     ? `${dataset().name} / ${dashboardViewLabels[activeTab]}` : dashboardViewLabels[activeTab];
   document.getElementById("contextScope").textContent = allAthletes
     ? "All athletes. Gender and age group apply to qualification analyses only."
@@ -60,7 +102,7 @@ function updateDashboardScope() {
       : activeTab === "experimental"
         ? "Selected race years displayed. Published course/season factors and athlete calibration retain their full training scope."
         : "Selected race years. Course models and personal-result calibration retain their full source scope.";
-  document.getElementById("eventSubtitle").textContent = allAthletes || activeTab === "qualification"
+  document.getElementById("eventSubtitle").textContent = allAthletes || ["qualification", "crossrace"].includes(activeTab)
     ? dataset().subtitle
     : `${dashboardWorkspaces[activeWorkspace].label} / ${dashboardViewLabels[activeTab]}`;
 }
@@ -87,20 +129,16 @@ function syncDashboardContext(key, value) {
 }
 
 function syncQualificationAssumptions() {
-  qualificationSystem = document.getElementById("contextRules").value;
-  qualificationAssumptions.mode = document.getElementById("contextCutoff").value;
+  qualificationSystem = document.querySelector('input[name="contextRules"]:checked').value;
   qualificationAssumptions.extraPlaces = Math.max(0, Math.round(Number(document.getElementById("contextExtraPlaces").value) || 0));
   qualificationAssumptions.legacyExtraPlaces = Math.max(0, Math.round(Number(document.getElementById("contextLegacyPlaces").value) || 0));
   qualificationAssumptions.fallback = document.getElementById("contextFallback").checked;
-  document.querySelectorAll(".qualification-system").forEach(control => control.value = qualificationSystem);
-  easiestCutoffMode.value = qualificationAssumptions.mode;
   [qualificationDeclines, oddsDeclines, easiestDeclines].forEach(control => {
     control.value = qualificationAssumptions.extraPlaces;
   });
-  document.getElementById("contextExtraPlaces").disabled = qualificationAssumptions.mode !== "places";
-  document.getElementById("contextLegacyPlaces").disabled = qualificationAssumptions.mode !== "places";
+  updateExtraPlacesControls();
   qualificationLegacyDeclines.value = qualificationAssumptions.legacyExtraPlaces;
-  oddsDeclines.disabled = easiestDeclines.disabled = qualificationAssumptions.mode !== "places";
+  oddsDeclines.disabled = easiestDeclines.disabled = dashboardContext.distance !== "im";
   renderSharedViews();
 }
 
@@ -129,11 +167,171 @@ function renderSelectedQualification() {
   const eventId = eventSelect.value;
   const gender = dashboardContext.gender;
   const ageGroup = dashboardContext.ageGroup;
-  container.innerHTML = `<h2>Selected Target / Strict Baseline</h2><p class="note">${escapeHtml(cutoffLabels[qualificationAssumptions.mode])} · ${escapeHtml(divisionFor(gender, ageGroup))}. Raw finish times; reported minute values and density estimates remain approximate. Matching evidence is not slot acceptance. ${qualificationAssumptions.fallback ? "Strict fallback enabled for unavailable editions." : "Unavailable editions are excluded from target rankings."}</p>
-    <div class="table-wrap"><table><thead><tr><th>Race Year</th><th>Strict Baseline</th><th>Selected Target</th><th>Cutoff Evidence / Cycle</th></tr></thead><tbody>${qualificationYears(eventId, qualificationSystem).map(year => {
-      const standard = easiestQualificationStandard(eventId, year, gender, ageGroup, qualificationSystem, qualificationAssumptions.mode, qualificationAssumptions.extraPlaces);
-      return `<tr><td>${yearCell(eventId, year)}</td><td>${assumptionTime(standard, true)}</td><td><strong>${assumptionTime(standard)}</strong></td><td>${qualificationEvidenceLink(standard)}</td></tr>`;
-    }).join("") || '<tr><td colspan="4" class="empty">No data for selected race years.</td></tr>'}</tbody></table></div>`;
+  const years = Object.keys(DATASETS[eventId].overall).sort().filter(compareYearVisible);
+  const approaches = scopedCutoffApproaches();
+  const standards = Object.fromEntries(years.map(year => [year, Object.fromEntries(approaches.map(({mode}) => [
+    mode, approachStandard(eventId, year, gender, ageGroup, qualificationSystem, mode),
+  ]))]));
+  container.innerHTML = `<h2>Targets by approach · ${escapeHtml(divisionFor(gender, ageGroup))}</h2>
+    <p class="note">All five approaches are evaluated independently for each race year. Scan labels identify each year's ranking scope and absence threshold. Missing or incompatible evidence stays explicit. Strict fallback means the strict allocation target is shown, not borrowed estimate evidence. Reported minute values and density estimates are approximate. Kona matches are not proof of slot acceptance.</p>
+    <p class="note">The exploratory match-density boundary compares observed Kona-starter match rates by ranking position with a constant-rate model, then fits a two-rate breakpoint. It requires at least 3 matches before the breakpoint and positive BIC improvement after the penalty; it reports the best breakpoint and weighted 5%-95% rank/time support, with sensitivity to single-race matches. This is unverified matching density, not evidence of actual acceptance or declines. Race targets never place this boundary faster than strict allocation.</p>
+    <div class="table-wrap"><table><thead><tr><th>Race year</th>${approaches.map(({label}) => `<th>${escapeHtml(label)}</th>`).join("")}</tr></thead><tbody>${years.map(year => `<tr><td>${yearCell(eventId, year)}</td>${approaches.map(({mode}) => `<td>${approachCell(standards[year][mode], mode)}</td>`).join("")}</tr>`).join("") || '<tr><td colspan="6" class="empty">No race years are visible.</td></tr>'}</tbody></table></div>`;
+  lineChart("qualificationChart", years, approaches.map(({mode, label, color}) => ({
+    label, color,
+    values: years.map(year => {
+      const standard = standards[year][mode];
+      return standard?.available && Number.isFinite(standard.needed) ? standard.needed : null;
+    }),
+  })));
+}
+
+function approachStandard(eventId, year, gender, ageGroup, system, mode) {
+  const strict = strictQualificationStandard(eventId, year, gender, ageGroup, system, {extraPlaces: 0});
+  if (!strict) return null;
+  const extraPlaces = strict.scope === "age group"
+    ? qualificationAssumptions.legacyExtraPlaces : qualificationAssumptions.extraPlaces;
+  return easiestQualificationStandard(eventId, year, gender, ageGroup, system, mode, extraPlaces);
+}
+
+function scopedCutoffApproaches() {
+  return cutoffApproaches.map(approach => approach.mode !== "scan" ? approach : {
+    ...approach,
+    label: qualificationSystem === "current" ? "15-absence scan" : "Absence scan by scope",
+  });
+}
+
+function scanScopeLabel(standard) {
+  const pool = standard?.cutoffPool;
+  const scan = pool?.cutoff_scan;
+  const scope = standard?.scope === "age group" ? "age-group" : "gender-pool";
+  const absences = scan?.consecutive_absences ?? (scope === "age-group" ? 3 : 15);
+  return `${absences}-absence ${scope} scan`;
+}
+
+function approachCell(standard, mode) {
+  const scanLabel = mode === "scan" ? `<small>${escapeHtml(scanScopeLabel(standard))}</small><br>` : "";
+  if (!standard) return `${scanLabel}<span title="No qualification target for this system and race year">No compatible target</span>`;
+  if (!standard.available) {
+    const reason = standard.unavailableReason || standard.cutoffSource || "Evidence unavailable";
+    return `${scanLabel}<span title="${escapeHtml(reason)}">No estimate</span><br><small>${escapeHtml(reason)}</small>`;
+  }
+  const value = assumptionTime(standard);
+  const fallback = standard.cutoffSource?.startsWith("Strict fallback");
+  const source = fallback ? "Strict fallback" : standard.cutoffSource;
+  return `${scanLabel}<strong>${fallback ? "Strict fallback · " : ""}${escapeHtml(value)}</strong><br><small>${escapeHtml(source || "")}</small>`;
+}
+
+function allRaceYears(eventId) {
+  return Object.keys(DATASETS[eventId]?.overall || {}).sort().filter(compareYearVisible);
+}
+
+function ensureApproachPanel(id, title, chartId, chartTitle) {
+  let panel = document.getElementById(id);
+  if (panel) return panel;
+  panel = document.createElement("section");
+  panel.id = id;
+  panel.innerHTML = `<h2>${title}</h2><p class="note">Each method uses only compatible evidence for that race year. Missing years are marked, not filled from another edition.</p><div class="table-wrap"><table><thead></thead><tbody></tbody></table></div><div class="chart-panel wide"><h3>${chartTitle}</h3><svg id="${chartId}" class="chart" viewBox="0 0 1000 400"></svg></div>`;
+  return panel;
+}
+
+function renderOddsApproaches() {
+  const group = oddsDistance.value;
+  const gender = oddsGender.value;
+  const ageGroup = oddsAgeGroup.value;
+  const entered = parseTime(oddsTime.value);
+  const averageBasis = oddsTimeBasis.value === "average";
+  const division = divisionFor(gender, ageGroup);
+  const eventIds = oddsEventIds();
+  const approaches = scopedCutoffApproaches();
+  const byRace = eventIds.map(eventId => {
+    const rows = allRaceYears(eventId).map(year => {
+      const standards = Object.fromEntries(approaches.map(({mode}) => [mode,
+        approachStandard(eventId, year, gender, ageGroup, qualificationSystem, mode),
+      ]));
+      const factor = courseFactor(eventId, year);
+      const modified = isModifiedCourse(eventId, year);
+      const expected = Number.isFinite(entered) && (!averageBasis || Number.isFinite(factor))
+        ? entered * (averageBasis ? factor : 1) : null;
+      return {year, standards, expected, factor, modified};
+    });
+    return {eventId, rows};
+  });
+  const section = document.getElementById("oddsApproachComparison");
+  const table = section.querySelector("table");
+  table.querySelector("thead").innerHTML = `<tr><th>Race</th><th>Year</th>${approaches.map(({label}) => `<th>${escapeHtml(label)}<br><small>target · result</small></th>`).join("")}</tr>`;
+  table.querySelector("tbody").innerHTML = byRace.flatMap(({eventId, rows}) => rows.map(row => `<tr><td>${escapeHtml(DATASETS[eventId].name)}</td><td>${yearCell(eventId, row.year)}</td>${approaches.map(({mode}) => {
+    const standard = row.standards[mode];
+    if (row.modified) return `<td>${mode === "scan" ? `<small>${escapeHtml(scanScopeLabel(standard))}</small><br>` : ""}Excluded: modified course</td>`;
+    if (!standard?.available) {
+      const reason = standard?.unavailableReason || standard?.cutoffSource || "No target for this race year";
+      return `<td>${approachCell(standard, mode)}<br><small>${escapeHtml(reason)}</small></td>`;
+    }
+    if (!Number.isFinite(row.expected)) return `<td>${approachCell(standard, mode)}<br><small>Enter a target time to evaluate</small></td>`;
+    const hit = row.expected <= standard.needed;
+    return `<td>${approachCell(standard, mode)}<br><small>${hit ? "Hit" : "Not hit"} · ${escapeHtml(duration(row.expected))} expected</small></td>`;
+  }).join("")}</tr>`)).join("") || '<tr><td colspan="7" class="empty">No race years are visible.</td></tr>';
+  const series = byRace.flatMap(({eventId, rows}) => approaches.map(({mode, label, color}) => ({
+    label: `${DATASETS[eventId].name} · ${label}`,
+    color,
+    thresholds: rows.flatMap(row => {
+      const standard = row.standards[mode];
+      const factor = averageBasis ? row.factor : 1;
+      return !row.modified && standard?.available && Number.isFinite(standard.needed) && Number.isFinite(factor)
+        ? [standard.needed / factor] : [];
+    }),
+  })));
+  stepShareChart("oddsApproachChart", series, entered);
+  section.querySelector(".note").textContent = `${division} · ${group === "im" ? "IRONMAN 140.6" : "IRONMAN 70.3"}. Each race-year row shows its target and whether your entered time meets it for every approach; the chart summarizes compatible years. Modified courses are excluded. Strict fallback means the strict target stands in for an unavailable estimate and is identified explicitly.`;
+}
+
+function renderFinderApproaches() {
+  const group = easiestDistance.value;
+  const gender = easiestGender.value;
+  const ageGroup = easiestAgeGroup.value;
+  const division = divisionFor(gender, ageGroup);
+  const eventIds = (raceGroups()[group] || []).filter(isQualifyingEvent);
+  const profile = easiestProfile(group, division);
+  const averageTransitions = typicalTransitions(group);
+  const averageTime = profile.used
+    ? SWIM_BIKE_RUN.reduce((sum, split) => sum + profile.splits[split], 0) + profile.transitionRatio * averageTransitions
+    : parseTime(easiestTypedTime);
+  const model = groupModel(group);
+  const sigma = (model.fit?.overall?.residual_sd ?? 0.036) * (profile.used ? Math.sqrt(1 + 1 / profile.used) : 1);
+  const approaches = scopedCutoffApproaches();
+  const raceRows = eventIds.map(eventId => ({eventId, rows: allRaceYears(eventId).map(year => {
+    const standards = Object.fromEntries(approaches.map(({mode}) => [mode,
+      approachStandard(eventId, year, gender, ageGroup, qualificationSystem, mode),
+    ]));
+    const modified = isModifiedCourse(eventId, year);
+    const expected = modified || !Number.isFinite(averageTime) ? null
+      : predictRaceYear(eventId, year, profile.used ? profile.splits : null, profile.transitionRatio, averageTime);
+    return {year, standards, expected, modified};
+  })}));
+  const section = document.getElementById("finderApproachComparison");
+  const table = section.querySelector("table");
+  table.querySelector("thead").innerHTML = `<tr><th>Race</th><th>Year</th>${approaches.map(({label}) => `<th>${escapeHtml(label)}<br><small>target · margin · chance</small></th>`).join("")}</tr>`;
+  table.querySelector("tbody").innerHTML = raceRows.flatMap(({eventId, rows}) => rows.map(row => `<tr><td>${escapeHtml(DATASETS[eventId].name)}</td><td>${yearCell(eventId, row.year)}</td>${approaches.map(({mode}) => {
+    const standard = row.standards[mode];
+    const scanLabel = mode === "scan" ? `<small>${escapeHtml(scanScopeLabel(standard))}</small><br>` : "";
+    if (row.modified) return `<td>${scanLabel}Excluded: modified course</td>`;
+    if (!standard?.available) return `<td>${approachCell(standard, mode)}</td>`;
+    if (!row.expected) return `<td>${scanLabel}No expected time or course factor</td>`;
+    const margin = standard.needed - row.expected.total;
+    const chance = standard.needed === Infinity ? 1 : standard.needed === -Infinity ? 0 : normalCdf(Math.log(standard.needed / row.expected.total) / sigma);
+    return `<td>${scanLabel}<strong>${assumptionTime(standard)}</strong><br>${signedDuration(margin)} · ${Math.round(100 * chance)}%</td>`;
+  }).join("")}</tr>`)).join("") || '<tr><td colspan="7" class="empty">No race years are visible.</td></tr>';
+  const chartSeries = approaches.map(({mode, label, color}) => ({
+    label, color,
+    values: raceRows.map(({rows}) => rows.flatMap(row => {
+      const standard = row.standards[mode];
+      if (row.modified || !row.expected || !standard?.available || !Number.isFinite(standard.needed)) return [];
+      return [{year: row.year, value: standard.needed - row.expected.total,
+        detail: `${neededText(standard.needed)} target · ${duration(row.expected.total)} expected · ${label}`}];
+    })),
+  }));
+  categoryPointChart("finderApproachChart", raceRows.map(({eventId}) => DATASETS[eventId].name), chartSeries,
+    {includeZero: true, formatValue: signedDuration, formatTick: signedDurationShort, yAxisLabel: "Target minus expected time"});
+  section.querySelector(".note").textContent = `${division} · all five approaches are shown per race year. Chance uses the existing day-to-day variation model; it is not a historical acceptance probability. Missing/incompatible evidence and modified courses are not silently replaced.`;
 }
 
 function decorateQualificationRankings() {
@@ -147,7 +345,6 @@ function decorateQualificationRankings() {
       }
     });
   }
-  const inferred = !["strict", "places"].includes(qualificationAssumptions.mode);
   for (const eventId of oddsEventIds()) {
     const body = document.getElementById("oddsRankingBody");
     if (![...body.rows].some(row => row.cells[0]?.textContent === DATASETS[eventId].name)) {
@@ -155,27 +352,22 @@ function decorateQualificationRankings() {
       row.innerHTML = `<td><button type="button" class="race-link" data-target-race="${eventId}">${escapeHtml(DATASETS[eventId].name)}</button></td><td colspan="9">No compatible target for selected race years. Not ranked.</td>`;
     }
   }
-  document.getElementById("easiestRankingNote").textContent = `Modelled chance averages selected, compatible race years, not a historical acceptance probability. ${cutoffLabels[qualificationAssumptions.mode]} replaces manual extra places. ${inferred ? qualificationAssumptions.fallback ? "Unavailable editions use explicitly enabled strict fallback." : "Uncovered or incompatible editions are excluded; races with no compatible target stay visible and unranked." : "Strict allocation counts remain separate from hypothetical roll-down."} Published course factors and your saved results retain their full calibration scope. Few race years give uncertain estimates.`;
+  document.getElementById("easiestRankingNote").textContent = `This ranking is the strict-allocation baseline. The comparison below evaluates strict, manual extra places, reported last accepted, density estimate, and the ${qualificationSystem === "current" ? "15-absence scan" : "scope-specific absence scan"}. Incompatible or unavailable evidence is marked per race year; strict fallback is identified explicitly. Chance is modelled, not historical acceptance probability.`;
   const oddsNote = document.getElementById("oddsRankingNote");
-  oddsNote.textContent = oddsNote.textContent.split(" Selected cutoff:")[0].replace("Strict entitlement model: declines and ceremony attendance are not observed in the results.", "") + ` Selected cutoff: ${cutoffLabels[qualificationAssumptions.mode]}. Target hits are historical comparisons, not modelled future chance or verified acceptance. Unavailable editions are excluded unless strict fallback is enabled.`;
+  oddsNote.textContent = `${oddsNote.textContent.split(" Selected cutoff:")[0]} All five cutoff approaches are compared below. Historical target hits are not verified slot acceptance; incompatible race years are marked unavailable rather than borrowing another edition's evidence.`;
   const oddsHeader = document.getElementById("oddsRankingHead").querySelectorAll("th")[2];
   if (oddsHeader) oddsHeader.textContent = "Historical Target Hits";
   const coverageHeader = document.getElementById("easiestRankingHead").querySelectorAll("th")[4];
-  if (coverageHeader) coverageHeader.title = "Only compatible selected editions are included; unavailable editions use strict targets only when fallback is explicitly enabled.";
-  document.querySelectorAll("#easiestRankingBody tr").forEach(row => {
-    if (row.cells.length === 13 && qualificationAssumptions.mode === "strict") row.cells[4].textContent = "Strict allocation";
-    if (row.cells.length === 13 && ["reported", "density"].includes(qualificationAssumptions.mode)) {
-      const value = parseTime(row.cells[7].textContent);
-      if (Number.isFinite(value)) row.cells[7].textContent = `~${duration(Math.round(value / 60) * 60).slice(0, 5)}`;
-    }
-  });
+  if (coverageHeader) coverageHeader.title = "The main ranking uses strict allocation; the comparison below shows all five approaches per race year.";
 }
 
 function decorateDashboard() {
   updateDashboardScope();
   renderSelectedQualification();
+  renderOddsApproaches();
+  renderFinderApproaches();
   decorateQualificationRankings();
-  document.getElementById("ageGroupTargetChartTitle").textContent = `Selected target by age group / ${cutoffLabels[qualificationAssumptions.mode]}`;
+  document.getElementById("ageGroupTargetChartTitle").textContent = "Strict allocation context by age group";
   document.querySelectorAll(".tab-panel tbody").forEach(body => {
     if (!body.children.length) {
       const columns = body.closest("table").querySelectorAll("thead th").length;
@@ -194,6 +386,13 @@ function initializeDashboardUI() {
     .context-fields[hidden], .context-years[hidden], .chart-panel[hidden] {display:none}
     .context-fields label {min-width:110px} .context-bar .note {margin:10px 0 0}
     .context-fields input[type=number] {width:100%; min-width:0; box-sizing:border-box}
+    .qualification-approach {border:0; padding:0; margin:0; min-width:min(100%,520px)}
+    .qualification-approach legend {font-size:12px; color:var(--muted); margin-bottom:5px}
+    .segmented-control {display:flex; border:1px solid var(--line); border-radius:4px; overflow:hidden; min-height:38px}
+    .segmented-control label {display:flex; align-items:center; gap:7px; padding:7px 10px; background:#f4f7f5; cursor:pointer; flex:1}
+    .segmented-control label + label {border-left:1px solid var(--line)}
+    .segmented-control label:has(input:checked) {background:#dcebe8; color:var(--ink); font-weight:700}
+    .segmented-control input {margin:0; accent-color:var(--accent)}
     .context-years {display:flex; flex-wrap:wrap; align-items:center; gap:6px; margin-top:12px}
     .year-toggle {min-height:30px; padding:4px 9px; background:#f4f7f5; color:var(--ink); border:1px solid var(--line); border-bottom:3px solid var(--year-color); font-variant-numeric:tabular-nums}
     .year-toggle:hover {background:#e5ece8} .year-toggle[aria-pressed=false] {opacity:.4}
@@ -219,14 +418,16 @@ function initializeDashboardUI() {
   nav.innerHTML = `<nav id="workspaceTabs" class="tabs workspace-tabs" role="tablist" aria-label="Workspaces"></nav>
     <div class="context-bar"><div class="context-fields" hidden>
       <label>Distance<select id="contextDistance"><option value="im">IRONMAN 140.6</option><option value="703">IRONMAN 70.3</option></select></label>
-      <label>Gender<select id="contextGender"><option value="Male">Men</option><option value="Female">Women</option></select></label>
-      <label>Age group<select id="contextAgeGroup"></select></label>
+      <label class="context-gender">Gender<select id="contextGender"><option value="Male">Men</option><option value="Female">Women</option></select></label>
+      <label class="context-age-group">Age group<select id="contextAgeGroup"></select></label>
     </div><div class="context-fields assumption-fields">
-      <label>Rules & allocation<select id="contextRules"><option value="current">Current scenario</option><option value="historical">Actual historical</option></select></label>
-      <label>Cutoff<select id="contextCutoff">${Object.entries(cutoffLabels).map(([value, label]) => `<option value="${value}">${label}</option>`).join("")}</select></label>
-      <label>Pool extra places<input id="contextExtraPlaces" type="number" min="0" step="1" value="0" disabled></label>
+      <fieldset class="qualification-approach"><legend>Qualification approach</legend><div class="segmented-control" role="radiogroup" aria-label="Qualification approach">
+        <label><input type="radio" name="contextRules" value="historical"><span>Historically correct rules</span></label>
+        <label><input type="radio" name="contextRules" value="current" checked><span>Current performance pool on historical results</span></label>
+      </div></fieldset>
+      <label>Pool extra places<input id="contextExtraPlaces" type="number" min="0" step="1" value="0"></label>
       <label>Legacy AG extra places<input id="contextLegacyPlaces" type="number" min="0" step="1" value="0" disabled></label>
-      <label class="binary-label"><input type="checkbox" id="contextFallback">Use strict fallback</label>
+      <label class="binary-label"><input type="checkbox" id="contextFallback">Use strict fallback when evidence is unavailable</label>
     </div><div class="context-years"><button type="button" id="contextReturn" class="context-action" hidden>Back to ranking</button><span id="contextYearCount"></span>
       <button type="button" class="context-action" data-years-action="all">All</button>
       <button type="button" class="context-action" data-years-action="none">None</button>
@@ -241,10 +442,18 @@ function initializeDashboardUI() {
   const selectedSummary = document.createElement("section");
   selectedSummary.id = "selectedQualificationSummary";
   document.getElementById("qualificationContent").prepend(selectedSummary);
-  const comparisons = document.createElement("section");
-  comparisons.id = "qualificationComparisons";
-  comparisons.innerHTML = '<h2>Cross-race qualification</h2><div class="chart-grid"></div>';
-  document.getElementById("qualificationPanel").append(comparisons);
+  const oddsApproaches = ensureApproachPanel("oddsApproachComparison", "Historical target hits by cutoff approach", "oddsApproachChart", "Share of race years meeting your time");
+  document.getElementById("oddsPanel").append(oddsApproaches);
+  const finderApproaches = ensureApproachPanel("finderApproachComparison", "Race Finder by cutoff approach", "finderApproachChart", "Target margin by race and year");
+  document.getElementById("easiestPanel").append(finderApproaches);
+  const crossRacePanel = document.createElement("div");
+  crossRacePanel.id = "crossracePanel";
+  crossRacePanel.className = "tab-panel";
+  crossRacePanel.setAttribute("role", "tabpanel");
+  crossRacePanel.setAttribute("aria-labelledby", "view-crossrace");
+  crossRacePanel.innerHTML = '<p class="note">Strict allocation, qualification cutoffs, slot pressure and uncertainty compared across qualifying races. The selected qualification approach applies to all charts here.</p><section id="qualificationComparisons"><h2>Cross-race qualification</h2><div class="chart-grid"></div></section>';
+  document.getElementById("oddsPanel").before(crossRacePanel);
+  const comparisons = document.getElementById("qualificationComparisons");
   const comparisonGrid = comparisons.querySelector(".chart-grid");
   for (const id of ["compareImQualification", "compare703Qualification", "compareMeanQualification", "compareQualificationResidual", "compareSlotPressure", "compareCutoffPercentile", "compareQualificationUncertainty"]) {
     comparisonGrid.append(document.getElementById(id).closest(".chart-panel"));
@@ -273,8 +482,9 @@ function initializeDashboardUI() {
     fieldControls.append(label);
   }
   fieldPanel.querySelector("h2").after(fieldControls);
-  document.querySelectorAll(".qualification-system").forEach(control => control.closest("label")?.classList.add("local-context-control"));
-  [easiestCutoffMode, easiestDeclines, oddsDeclines].forEach(control => control.closest("label")?.classList.add("local-context-control"));
+  [easiestDeclines, oddsDeclines].forEach(control => control.closest("label")?.classList.add("local-context-control"));
+  [qualificationGender, qualificationAgeGroup, qualificationDeclines, qualificationLegacyDeclines].forEach(control => control.closest("label")?.classList.add("local-context-control"));
+  experimentalDistance.closest("label").classList.add("local-context-control");
   document.getElementById("years").parentElement.classList.add("local-context-control");
   document.getElementById("compareYears").closest("fieldset").classList.add("local-context-control");
   const finder = document.getElementById("easiestPanel");
@@ -297,26 +507,23 @@ function initializeDashboardUI() {
     ids.forEach(id => document.getElementById(id).addEventListener("change", event => syncDashboardContext(key, event.target.value)));
   }
   eventSelect.addEventListener("change", () => syncDashboardContext("distance", dataset().group));
-  ["contextRules", "contextCutoff", "contextFallback"].forEach(id => document.getElementById(id).addEventListener("change", syncQualificationAssumptions));
+  document.querySelectorAll('input[name="contextRules"]').forEach(control => control.addEventListener("change", syncQualificationAssumptions));
+  document.getElementById("contextFallback").addEventListener("change", syncQualificationAssumptions);
   document.getElementById("contextExtraPlaces").addEventListener("input", syncQualificationAssumptions);
   document.getElementById("contextLegacyPlaces").addEventListener("input", syncQualificationAssumptions);
   qualificationLegacyDeclines.addEventListener("input", () => {
     document.getElementById("contextLegacyPlaces").value = qualificationLegacyDeclines.value;
     syncQualificationAssumptions();
   }, true);
-  document.querySelectorAll(".qualification-system").forEach(control => control.addEventListener("change", () => {
-    document.getElementById("contextRules").value = control.value;
-    syncQualificationAssumptions();
-  }));
-  easiestCutoffMode.addEventListener("change", () => {
-    document.getElementById("contextCutoff").value = easiestCutoffMode.value;
-    syncQualificationAssumptions();
-  }, true);
   [qualificationDeclines, oddsDeclines, easiestDeclines].forEach(control => control.addEventListener("input", () => {
     document.getElementById("contextExtraPlaces").value = control.value;
-    if (control !== qualificationDeclines) document.getElementById("contextCutoff").value = "places";
     syncQualificationAssumptions();
   }, true));
+  [qualificationAgeGroup, qualificationGender].forEach(control => control.addEventListener("change", renderSelectedQualification));
+  [oddsDistance, oddsGender, oddsAgeGroup, oddsTimeBasis].forEach(control => control.addEventListener("change", renderOddsApproaches));
+  oddsTime.addEventListener("input", renderOddsApproaches);
+  [easiestDistance, easiestGender, easiestAgeGroup].forEach(control => control.addEventListener("change", renderFinderApproaches));
+  easiestTime.addEventListener("input", renderFinderApproaches);
   document.addEventListener("click", event => {
     const targetRace = event.target.closest("[data-target-race]");
     const evidence = event.target.closest("[data-evidence-race]");
@@ -338,8 +545,7 @@ function initializeDashboardUI() {
     }
     if (event.target.closest("#contextReturn")) {
       activateDashboardView(dashboardReturnView || "easiest");
-      dashboardReturnView = null;
-      document.getElementById("contextReturn").hidden = true;
+      clearDashboardReturn();
       return;
     }
     const year = event.target.closest("button[data-year]");
@@ -353,6 +559,7 @@ function initializeDashboardUI() {
     }
     const workspace = event.target.closest("[data-workspace]");
     const view = event.target.closest("[data-view]");
+    if (workspace || view) clearDashboardReturn();
     if (workspace) activateDashboardView(workspaceLastView[workspace.dataset.workspace]);
     if (view) activateDashboardView(view.dataset.view);
   });
@@ -366,7 +573,7 @@ function initializeDashboardUI() {
     buttons[next].click();
     tabs.querySelector(`[data-workspace="${key}"], [data-view="${key}"]`).focus();
   }));
-  document.getElementById("contextRules").value = qualificationSystem;
+  document.querySelector(`input[name="contextRules"][value="${qualificationSystem}"]`).checked = true;
   syncDashboardContext("distance", dataset().group);
   syncQualificationAssumptions();
   renderWorkspaceNavigation();

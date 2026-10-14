@@ -26,6 +26,7 @@ from split_time_analysis import (
 
 OUTPUT_FILE = DIST_DIR / "dashboard.html"
 DATA_FILE = DIST_DIR / "dashboard_data.js"
+INDEX_FILE = DIST_DIR / "index.html"
 COACHCOX_CACHE_DIR = CACHE_DIR / "CoachCoxQualificationPages"
 FULL_DISTANCE = {"swim": 3800, "bike": 180, "run": 42.2}
 HALF_DISTANCE = {"swim": 1900, "bike": 90, "run": 21.1}
@@ -987,6 +988,22 @@ def load_course_factors(datasets):
   return factors, models
 
 
+def current_pool_counterfactual_calendar(events, event_names, cycle):
+  calendar = []
+  for event_id, event in events.items():
+    if event.get("group") != "im" or not event.get("qualifying", True):
+      continue
+    race_name = event_names.get(event_id)
+    total_slots = event.get("qualification_slots")
+    if not race_name or not isinstance(total_slots, int) or total_slots <= 0:
+      continue
+    calendar.extend({
+      "qualification_cycle": str(cycle), "race_name": race_name,
+      "event_year": str(race_year), "total_qualifiers": total_slots,
+    } for race_year in event.get("years", {}))
+  return calendar
+
+
 def load_dashboard_data():
   rider = Rider()
   bike_course_corrections = {}
@@ -1047,6 +1064,22 @@ def load_dashboard_data():
       read_results(csv_files), calendar, EVENTS,
       read_results, COACHCOX_EVENT_NAMES, year=cycle, historical_targets=historical_targets,
     )
+  if traces:
+    roster_cycle = max(traces, key=lambda cycle: int(cycle))
+    counterfactual_calendar = current_pool_counterfactual_calendar(
+      EVENTS, COACHCOX_EVENT_NAMES, roster_cycle,
+    )
+    counterfactual_trace = build_kona_trace(
+      read_results(kona["years"][roster_cycle]), counterfactual_calendar, EVENTS,
+      read_results, COACHCOX_EVENT_NAMES, year=roster_cycle,
+      historical_targets=historical_targets, ranking_cycle=qualification_full.CURRENT_CYCLE,
+    )
+    traces[roster_cycle]["counterfactual_summaries"] = [
+      {key: value for key, value in row.items() if key != "manual_pool_times"}
+      for row in counterfactual_trace["summaries"]["all"]
+    ]
+    traces[roster_cycle]["counterfactual_standards"] = counterfactual_trace["standards"]
+    traces[roster_cycle]["counterfactual_standard_cycle"] = counterfactual_trace["standard_cycle"]
   if "im_kona" in datasets:
     datasets["im_kona"]["kona_traces"] = traces
     datasets["im_kona"]["kona_trace"] = traces.get("2026")
@@ -1274,7 +1307,6 @@ def build_html(datasets):
         <div class="metric"><span id="qualificationCheckLabel">Model vs. official qualifiers</span><strong id="qualificationCheckMetric">—</strong></div>
       </div>
       <div class="controls">
-        <label>Qualification system <select class="qualification-system"><option value="current">Current performance pool</option><option value="historical">Actual historical rules + slots</option></select></label>
         <label>Gender <select id="qualificationGender"><option value="Male">Men</option><option value="Female">Women</option></select></label>
         <label>Displayed age group <select id="qualificationAgeGroup"></select></label>
         <label>Performance-pool declines (X) <input id="qualificationDeclines" type="number" min="0" step="1" value="0"></label>
@@ -1302,7 +1334,6 @@ def build_html(datasets):
       <p class="note">Checks a finish time against every qualifying race-year in the dataset. With the average-course basis, your time is converted to each race-year's course and conditions using the factors from the Experimental tab, so a 10:00 athlete is expected to need longer in Nice than in Copenhagen. A time qualifies when it is at or below the time needed: the age-group winner's time or the performance-pool equivalent in performance-pool years, and the last allocated age-group slot in legacy years. Inserting your result is assumed not to change the slot split. Shortened race-years are excluded.</p>
       <div class="controls">
         <label>Distance <select id="oddsDistance"><option value="im">IRONMAN 140.6</option><option value="703">IRONMAN 70.3</option></select></label>
-        <label>Qualification system <select class="qualification-system"><option value="current">Current performance pool</option><option value="historical">Actual historical rules + slots</option></select></label>
         <label>Gender <select id="oddsGender"><option value="Male">Men</option><option value="Female">Women</option></select></label>
         <label>Age group <select id="oddsAgeGroup"></select></label>
         <label>Your finish time (HH:MM:SS) <input id="oddsTime" class="duration-input" type="text" inputmode="numeric" pattern="[0-9]+:[0-5][0-9]:[0-5][0-9]" value="10:00:00" aria-label="Your finish time"></label>
@@ -1345,11 +1376,9 @@ def build_html(datasets):
       <p class="note">Ranks every qualifying race by your chance to qualify. For each past race-year the dashboard predicts your time on that course and in that year's conditions, compares it with the time needed in your age group (slots, rules, and field of that race-year), and turns the gap into a probability. Add your past results for a split-by-split prediction that rewards courses matching your strengths; without results, enter a finish time on an average course.</p>
       <div class="controls">
         <label>Distance <select id="easiestDistance"><option value="im">IRONMAN 140.6</option><option value="703">IRONMAN 70.3</option></select></label>
-        <label>Qualification system <select class="qualification-system"><option value="current">Current performance pool</option><option value="historical">Actual historical rules + slots</option></select></label>
         <label>Gender <select id="easiestGender"><option value="Male">Men</option><option value="Female">Women</option></select></label>
         <label>Age group at your next race <select id="easiestAgeGroup"></select></label>
         <label>Finish time on an average course <input id="easiestTime" class="duration-input" type="text" inputmode="numeric" pattern="[0-9]+:[0-5][0-9]:[0-5][0-9]" value="10:30:00" aria-label="Finish time on an average course"></label>
-        <label class="cutoff-control">Qualification cutoff <select id="easiestCutoffMode"><option value="strict">Strict allocation</option><option value="places">Slot allocation + extra places</option><option value="reported">Reported last accepted</option><option value="density">Estimated pool time: density</option><option value="scan">Estimated pool time: 15 absences</option></select></label>
         <label>Extra roll-down places <input id="easiestDeclines" type="number" min="0" step="1" value="0"></label>
       </div>
       <section>
@@ -1420,7 +1449,7 @@ def build_html(datasets):
           <ol>
             <li><strong>Your ability per split on an average course.</strong> <span class="formula">a<sub>s</sub> = geometric mean over your results of t<sub>s</sub> × A(age group then) ÷ A(age group next race) ÷ f<sub>s</sub>(race-year)</span> for s = swim, bike, run. f<sub>s</sub> are the split factors from the Experimental tab; A is the age-grading standard, so results from a younger age group are slowed down to your next age group. Transitions: your T1 + T2 relative to that race-year's median, averaged over your results.</li>
             <li><strong>Expected time at race-year r.</strong> <span class="formula">T<sub>r</sub> = a<sub>swim</sub>·f<sub>swim</sub>(r) + a<sub>bike</sub>·f<sub>bike</sub>(r) + a<sub>run</sub>·f<sub>run</sub>(r) + transition ratio × median T1+T2(r)</span>. A strong cyclist loses less time than the field on a hard bike course, so hilly courses rank higher for them. Without results: T<sub>r</sub> = your average-course time × f<sub>overall</sub>(r).</li>
-            <li><strong>Time needed N<sub>r</sub></strong> in your age group: the slower of the age-group winner and the performance-pool equivalent, or the last allocated age-group slot in legacy years. Manual extra places extend the pool or legacy age-group allocation separately. Reported, density and 15-absence modes use compatible race-year and gender evidence converted with its Kona-cycle standard; extra places are not added. Uncovered editions are excluded unless strict fallback is explicitly enabled. Changed allocation, modified course, legacy rules or a different cycle cannot silently borrow a cutoff.</li>
+            <li><strong>Time needed N<sub>r</sub></strong> in your age group: the slower of the age-group winner and the performance-pool equivalent, or the last allocated age-group slot in legacy years. Manual extra places extend the pool or legacy age-group allocation separately. Reported, density and absence-scan modes use only compatible scope and cycle evidence; legacy scans rank raw age-group times with three consecutive absences, while gender-pool scans use fifteen. Extra places are not added to evidence estimates. Uncovered editions are excluded unless strict fallback is explicitly enabled. Changed allocation, modified course or a different cycle cannot silently borrow a cutoff.</li>
             <li><strong>Chance in race-year r.</strong> <span class="formula">p<sub>r</sub> = Φ( ln(N<sub>r</sub> ÷ T<sub>r</sub>) ÷ σ )</span>. Φ is the standard normal distribution; σ is how much one athlete's result varies from race to race after course and conditions are removed (the residual SD of the course model), widened by √(1 + 1/n) when your ability comes from n results.</li>
             <li><strong>Chance at a race</strong> = average of p<sub>r</sub> over its past race-years; every race-year is one equally likely scenario for field strength, slots, and weather. Races with few race-years are less certain.</li>
             <li><strong>Course fit</strong> = your expected time ÷ the expected time of same-level athletes (median splits of your age group at your average-course level) on this course, relative to an average course. Negative means the course suits your profile.</li>
@@ -1523,7 +1552,6 @@ def build_html(datasets):
           <div class="chart-heading">
             <h2>IRONMAN World Championship — raw qualifying time by race</h2>
             <div class="chart-controls">
-              <label>System <select class="qualification-system"><option value="current">Current</option><option value="historical">Historical</option></select></label>
               <label>Age group <select id="compareImAgeGroup"></select></label>
               <label>Gender <select id="compareImGender"><option value="Male">Men</option><option value="Female">Women</option></select></label>
             </div>
@@ -1535,7 +1563,6 @@ def build_html(datasets):
           <div class="chart-heading">
             <h2>70.3 World Championship — raw qualifying time by race</h2>
             <div class="chart-controls">
-              <label>System <select class="qualification-system"><option value="current">Current</option><option value="historical">Historical</option></select></label>
               <label>Age group <select id="compare703AgeGroup"></select></label>
               <label>Gender <select id="compare703Gender"><option value="Male">Men</option><option value="Female">Women</option></select></label>
             </div>
@@ -1549,7 +1576,6 @@ def build_html(datasets):
           <div class="chart-heading">
             <h2>Mean finish time vs. raw qualifying time</h2>
             <div class="chart-controls">
-              <label>System <select class="qualification-system"><option value="current">Current</option><option value="historical">Historical</option></select></label>
               <label>Distance <select id="compareScatterDistance"><option value="im">IRONMAN 140.6</option><option value="703">IRONMAN 70.3</option></select></label>
               <label>Age group <select id="compareScatterAgeGroup"></select></label>
               <label>Gender <select id="compareScatterGender"><option value="Male">Men</option><option value="Female">Women</option></select></label>
@@ -1611,20 +1637,25 @@ def build_html(datasets):
       <p id="konaCoverageNote" class="note"></p>
       <section>
         <h2>Pool cutoffs and conditional skipped places</h2>
-        <p class="note">Two exploratory estimates are shown separately. The density estimate detects a drop in Kona matches; its minute-rounded range combines model support and match-selection sensitivity, not a confidence interval. The 15-absence estimate reports the last matched pool athlete before the first 15 consecutive nonmatches after the fixed allocation. Missing matches, other qualifying races and special-entry routes can bias both methods. Neither proves acceptance or counts declined slots. Frankfurt 2026 uses a modified course, not a comparable full-distance finish time.</p>
+        <p class="note">Two exploratory estimates are shown separately. The density estimate detects a drop in Kona matches; its minute-rounded range combines model support and match-selection sensitivity, not a confidence interval. The absence scan reports the last matched athlete before the first consecutive unmatched run after the fixed allocation: three within legacy age-group rankings, fifteen within gender performance pools. Missing matches, other qualifying races and special-entry routes can bias both methods. Neither proves acceptance or counts declined slots. Frankfurt 2026 uses a modified course, not a comparable full-distance finish time.</p>
         <p class="note">Reported last-accepted pool times are source-labeled references, separate from athlete matches. A time reported to the minute does not establish an exact pool rank. A match-based cutoff is unknown until a slot source is attributed. A single local finish does not establish that source: athletes may qualify elsewhere or enter through Legacy or another special route. Reviewed attributions are assumptions, not verified acceptances. Unverified modes show candidate maxima, not qualifying cutoffs. Skipped places = max(0, deepest attributed pool rank minus initial pool slots); prior qualification, automatic-slot roll-downs, reallocations and Kona DNS mean this is not a count of people who declined.</p>
         <div class="table-wrap" style="max-height:none">
-          <table><thead><tr><th>Qualifying race</th><th>Year</th><th>Total slots</th><th>Initial gender pool</th><th>Matched starters</th><th>Attributed starters</th><th>Selected pool rank</th><th>Strict age-graded cutoff</th><th>Reported last accepted</th><th>Density estimate</th><th>15-absence estimate</th><th>Selected age-graded time</th><th>Conditional skipped places</th><th>Selected starter</th></tr></thead><tbody id="konaSummaryBody"></tbody></table>
+          <table><thead><tr><th>Qualifying race</th><th>Year</th><th>Total slots</th><th>Initial pool slots</th><th>Matched starters</th><th>Attributed starters</th><th>Selected pool rank</th><th>Strict cutoff</th><th>Manual extra-place target</th><th>Reported last accepted</th><th>Density estimate</th><th>Absence scan</th><th>Modelled roll-down (%)</th><th>Selected time</th><th>Conditional skipped places</th><th>Selected starter</th></tr></thead><tbody id="konaSummaryBody"></tbody></table>
         </div>
       </section>
       <div class="chart-grid">
         <div class="chart-panel wide">
-          <h2>Strict, reported and match-based pool times</h2>
+          <h2>Strict, reported and match-based cutoff times</h2>
           <svg id="konaCutoffChart" class="chart" viewBox="0 0 1000 420"></svg>
         </div>
         <div class="chart-panel wide">
           <h2>Conditional skipped places by qualifying race</h2>
           <svg id="konaSkippedChart" class="chart" viewBox="0 0 1000 380"></svg>
+        </div>
+        <div class="chart-panel wide">
+          <h2>Absence-scan roll-down assumption</h2>
+          <p class="note">The scan uses 3 consecutive absences within a legacy age group and 15 within a gender performance pool. This model-derived rate is an assumption, not an observed count or rate of declined slots.</p>
+          <svg id="konaRollDownChart" class="chart" viewBox="0 0 1000 380"></svg>
         </div>
       </div>
       <section>
@@ -1650,8 +1681,6 @@ def build_html(datasets):
       <p class="note">Course and race-day conditions are estimated from athletes who finished several race-years of the same distance: each athlete is compared only with themselves, so ability cancels out. +5% means the same athlete was 5% slower than in the average qualifying race-year. Times are age-graded with the current Kona or 70.3 Standard first so that ageing between races does not make later years look harder, and the model removes the typical gain of returning athletes over their first appearance (<span id="experimentalReturningNote">—</span>). Shortened race-years are excluded. 70.3 factors compare Zell am See editions with each other only.</p>
       <div class="controls">
         <label>Distance <select id="experimentalDistance"><option value="im">IRONMAN 140.6</option><option value="703">IRONMAN 70.3</option></select></label>
-        <label>Split <select id="experimentalSplit"><option value="overall">Overall</option><option value="swim">Swim</option><option value="bike">Bike</option><option value="run">Run</option></select></label>
-        <label>Gender <select id="experimentalGender"><option value="Male">Men</option><option value="Female">Women</option></select></label>
         <label>Top finishers (%) <input id="experimentalPercentile" type="number" min="0.1" max="100" step="0.1" value="20"></label>
       </div>
       <section>
@@ -1684,7 +1713,6 @@ def build_html(datasets):
       <section>
         <div class="chart-heading">
           <h2 id="experimentalBreakdownTitle">Factor breakdown by race-year</h2>
-          <div class="chart-controls"><label>Race <select id="experimentalBreakdownRace"></select></label></div>
         </div>
         <div class="table-wrap" style="max-height:none">
           <table><thead id="experimentalBreakdownHead"></thead><tbody id="experimentalBreakdownBody"></tbody></table>
@@ -1703,19 +1731,15 @@ def build_html(datasets):
           <svg id="experimentalSeasonChart" class="chart" viewBox="0 0 1000 340"></svg>
         </div>
         <div class="chart-panel wide">
-          <h2 id="experimentalFieldTitle">Course-adjusted field strength</h2>
-          <p class="note">Top-percentage cutoff of the selected gender's split-complete age-group finishers, divided by the race-year's overall factor: the time those finishers would have needed on an average course. Lower means a stronger field.</p>
+          <h2 id="experimentalFieldTitle">Course-adjusted all-cohort field strength</h2>
+          <p class="note">Top-percentage cutoff across both genders and all age groups, divided by the race-year's overall factor. Lower means a stronger field.</p>
           <svg id="experimentalFieldChart" class="chart" viewBox="0 0 1000 400"></svg>
         </div>
         <div class="chart-panel wide">
           <div class="chart-heading">
             <h2 id="experimentalNeededTitle">Course-adjusted time needed to qualify</h2>
-            <div class="chart-controls">
-              <label>System <select class="qualification-system"><option value="current">Current</option><option value="historical">Historical</option></select></label>
-              <label>Age group <select id="experimentalAgeGroup"></select></label>
-            </div>
           </div>
-          <p class="note">Time needed to qualify divided by the race-year's overall factor, so races can be compared as if raced on the same average course. Higher means easier.</p>
+          <p class="note">Median qualification target across available genders and age groups, divided by the race-year's overall factor. Uses the selected qualification system and shared race-year filter.</p>
           <svg id="experimentalNeededChart" class="chart" viewBox="0 0 1000 400"></svg>
         </div>
         <div class="chart-panel wide">
@@ -1726,9 +1750,6 @@ def build_html(datasets):
       </div>
       <section>
         <h2>Worked example: athletes who raced several race-years</h2>
-        <div class="controls">
-          <label>Find athlete <input id="experimentalAthleteSearch" type="search" placeholder="Name, e.g. Berg"></label>
-        </div>
         <div class="table-wrap">
           <table><thead id="experimentalAthleteHead"></thead><tbody id="experimentalAthleteBody"></tbody></table>
         </div>
@@ -1737,10 +1758,6 @@ def build_html(datasets):
       <section>
         <div class="chart-heading">
           <h2>Raw-data check: athletes who raced both courses</h2>
-          <div class="chart-controls">
-            <label>Course A <select id="experimentalRaceA"></select></label>
-            <label>Course B <select id="experimentalRaceB"></select></label>
-          </div>
         </div>
         <div class="metrics">
           <div class="metric"><span>Athletes who raced both</span><strong id="experimentalPairCount">—</strong></div>
@@ -1782,13 +1799,6 @@ def build_html(datasets):
     const oddsDeclines = document.getElementById("oddsDeclines");
     const oddsTimeBasis = document.getElementById("oddsTimeBasis");
     const experimentalDistance = document.getElementById("experimentalDistance");
-    const experimentalSplit = document.getElementById("experimentalSplit");
-    const experimentalGender = document.getElementById("experimentalGender");
-    const experimentalAgeGroup = document.getElementById("experimentalAgeGroup");
-    const experimentalBreakdownRace = document.getElementById("experimentalBreakdownRace");
-    const experimentalAthleteSearch = document.getElementById("experimentalAthleteSearch");
-    const experimentalRaceA = document.getElementById("experimentalRaceA");
-    const experimentalRaceB = document.getElementById("experimentalRaceB");
     const compareSplitDistance = document.getElementById("compareSplitDistance");
     const splitStatsCache = new Map();
     const athleteIndexCache = new Map();
@@ -2660,12 +2670,26 @@ def build_html(datasets):
       const minute = (seconds, rounding) => qualificationDuration(rounding(seconds / 60) * 60).slice(0, 5);
       const range = `${{minute(estimate.low_time, Math.floor)}} to ${{minute(estimate.high_time, Math.ceil)}}`;
       const sensitivity = estimate.sensitive ? "Sensitive to match selection" : !Number.isFinite(estimate.single_match_time) ? "Single-match subset unsupported" : "Exploratory";
-      return `<span title="Estimated pool rank ${{estimate.rank}}; ${{estimate.matched_pool_starters}} pool matches; BIC improvement ${{estimate.bic_gain}}">~${{minute(estimate.time, Math.round)}}</span><br><small>Range ${{range}}<br>${{sensitivity}}</small>`;
+      const rankScope = row.slot_scope === "age group" ? "age-group rank" : "gender-pool rank";
+      return `<span title="Exploratory match-density boundary, not actual acceptance; ${{rankScope}} ${{estimate.rank}}; ${{estimate.matched_pool_starters}} ranked matches; BIC improvement ${{estimate.bic_gain}}">~${{minute(estimate.time, Math.round)}}</span><br><small>Range ${{range}}<br>${{sensitivity}}</small>`;
     }}
     function scannedKonaCutoffCell(row) {{
       const scan = row.cutoff_scan;
       if (!Number.isFinite(scan?.time)) return `—<br><small>${{escapeHtml(scan?.reason || "Unavailable")}}</small>`;
-      return `<span title="Unverified estimate; scan starts at pool rank ${{row.pool_slots + 1}}">${{qualificationDuration(scan.time)}}</span><br><small>${{escapeHtml(scan.athlete)}}<br>Pool rank ${{scan.rank}}<br>${{scan.consecutive_absences}} absences: ranks ${{scan.gap_start_rank}} to ${{scan.gap_end_rank}}</small>`;
+      if (scan.rank <= row.pool_slots || Number.isFinite(row.strict_cutoff) && scan.time < Math.floor(row.strict_cutoff)) {{
+        return `—<br><small>Scan did not clear the strict allocation boundary</small>`;
+      }}
+      const rankScope = row.slot_scope === "age group" ? "age-group rank" : "gender-pool rank";
+      return `<span title="Unverified estimate; scan starts at ${{rankScope}} ${{row.pool_slots + 1}}">${{qualificationDuration(scan.time)}}</span><br><small>${{escapeHtml(scan.athlete)}}<br>${{rankScope}} ${{scan.rank}}<br>${{scan.consecutive_absences}} absences: ranks ${{scan.gap_start_rank}} to ${{scan.gap_end_rank}}</small>`;
+    }}
+    function manualKonaCutoff(row, trace) {{
+      const extraPlaces = trace.slot_scope === "age group"
+        ? qualificationAssumptions.legacyExtraPlaces : qualificationAssumptions.extraPlaces;
+      const rank = row.pool_slots + extraPlaces;
+      const time = row.manual_pool_times?.[rank - 1];
+      if (!Number.isFinite(time) || rank <= 0) return `—<br><small>No ranked finisher at slot ${{rank}}</small>`;
+      const rankScope = trace.slot_scope === "age group" ? "age-group rank" : "gender-pool rank";
+      return `<strong>${{qualificationDuration(time)}}</strong><br><small>${{extraPlaces}} extra place${{extraPlaces === 1 ? "" : "s"}} · ${{rankScope}} ${{rank}}</small>`;
     }}
     function selectedKonaTrace() {{
       return DATASETS.im_kona?.kona_traces?.[document.getElementById("konaCycle").value] || DATASETS.im_kona?.kona_trace;
@@ -2686,8 +2710,12 @@ def build_html(datasets):
       document.querySelector("#konaPanel > h2").textContent = `Kona ${{trace.year}} starters and qualifying results`;
       const summaryHeaders = document.querySelectorAll("#konaSummaryBody").length ? document.querySelector("#konaSummaryBody").closest("table").querySelectorAll("th") : [];
       summaryHeaders[3].textContent = legacy ? "Initial age-group slots" : "Initial gender pool";
+      summaryHeaders[6].textContent = legacy ? "Selected age-group rank" : "Selected pool rank";
       summaryHeaders[7].textContent = legacy ? "Strict raw cutoff" : "Strict age-graded cutoff";
-      summaryHeaders[11].textContent = legacy ? "Selected raw time" : "Selected age-graded time";
+      summaryHeaders[10].textContent = "Match-density boundary";
+      summaryHeaders[11].textContent = legacy ? "3-absence age-group scan" : "15-absence gender-pool scan";
+      summaryHeaders[13].textContent = legacy ? "Selected raw time" : "Selected age-graded time";
+      document.querySelector("#konaMatchesBody").closest("table").querySelectorAll("th")[8].textContent = legacy ? "Age-group rank" : "Pool rank";
       document.querySelector("#konaMatchesBody").closest("table").querySelectorAll("th")[9].textContent = legacy ? "Raw ranked time" : "Age-graded time";
       const evidence = document.getElementById("konaEvidence").value;
       const selectedRace = document.getElementById("konaRace").value;
@@ -2705,9 +2733,13 @@ def build_html(datasets):
         attributed_starters: null, deepest_rank: row.candidate_deepest_rank,
         observed_cutoff: row.candidate_cutoff, deepest_name: row.candidate_deepest_name,
         estimated_skipped_slots: row.candidate_skipped_slots,
-      }} : reviewedKonaSummary(row, starters));
+      }} : reviewedKonaSummary(row, starters)).map(row => ({{
+        ...row,
+        manual_pool_times: trace.summaries.all.find(pool => pool.event_id === row.event_id && pool.year === row.year
+          && pool.gender === row.gender && pool.division === row.division)?.manual_pool_times,
+      }}));
       const count = value => Number.isFinite(value) ? value.toLocaleString() : "—";
-      document.getElementById("konaSummaryBody").innerHTML = rows.map(row => `<tr><td>${{escapeHtml(row.name)}}${{isModifiedCourse(row.event_id, row.year) ? " (modified course)" : ""}}</td><td>${{row.year}}</td><td>${{row.total_slots}}</td><td>${{row.pool_slots}}</td><td>${{row.matched_starters}}</td><td>${{count(row.attributed_starters)}}</td><td>${{count(row.deepest_rank)}}</td><td>${{qualificationDuration(row.strict_cutoff)}}</td><td>${{reportedKonaCutoffCell(row)}}</td><td>${{estimatedKonaCutoffCell(row)}}</td><td>${{scannedKonaCutoffCell(row)}}</td><td>${{qualificationDuration(row.observed_cutoff)}}${{unverified ? " (unverified maximum)" : ""}}</td><td>${{count(row.estimated_skipped_slots)}}${{unverified ? " (unverified)" : ""}}</td><td>${{escapeHtml(row.deepest_name || "—")}}</td></tr>`).join("") || `<tr><td colspan="14">No qualifying race data available</td></tr>`;
+      document.getElementById("konaSummaryBody").innerHTML = rows.map(row => `<tr><td>${{escapeHtml(row.name)}}${{isModifiedCourse(row.event_id, row.year) ? " (modified course)" : ""}}</td><td>${{row.year}}</td><td>${{row.total_slots}}</td><td>${{row.pool_slots}}</td><td>${{row.matched_starters}}</td><td>${{count(row.attributed_starters)}}</td><td>${{count(row.deepest_rank)}}</td><td>${{qualificationDuration(row.strict_cutoff)}}</td><td>${{manualKonaCutoff(row, trace)}}</td><td>${{reportedKonaCutoffCell(row)}}</td><td>${{estimatedKonaCutoffCell(row)}}</td><td>${{scannedKonaCutoffCell(row)}}</td><td>${{Number.isFinite(row.cutoff_scan?.modeled_roll_down_percent) ? `${{row.cutoff_scan.modeled_roll_down_percent.toFixed(1)}}%<br><small>model-derived assumption</small>` : "—"}}</td><td>${{qualificationDuration(row.observed_cutoff)}}${{unverified ? " (unverified maximum)" : ""}}</td><td>${{count(row.estimated_skipped_slots)}}${{unverified ? " (unverified)" : ""}}</td><td>${{escapeHtml(row.deepest_name || "—")}}</td></tr>`).join("") || `<tr><td colspan="16">No qualifying race data available</td></tr>`;
       rows.forEach((row, index) => {{
         if (row.allocation_method) document.getElementById("konaSummaryBody").rows[index].cells[3].innerHTML += `<br><small>${{escapeHtml(row.allocation_method)}}</small>`;
       }});
@@ -2715,23 +2747,40 @@ def build_html(datasets):
       rows.forEach(row => {{ row.estimated_cutoff = row.cutoff_estimate?.time; row.scanned_cutoff = row.cutoff_scan?.time; }});
       const timeSeries = [
         [legacy ? "Strict age-group cutoff" : "Strict pool cutoff", "strict_cutoff", "#006d77"],
+        ["Manual extra-place target", "manual_extra_cutoff", "#e76f51"],
         ["Reported last accepted", "reported_cutoff", "#495057"],
-        ["Density estimate (unverified)", "estimated_cutoff", "#b08900"],
-        ["15-absence scan (unverified)", "scanned_cutoff", "#277da1"],
+        ["Match-density boundary (exploratory)", "estimated_cutoff", "#b08900"],
+        [`${{legacy ? "3-absence age-group" : "15-absence gender-pool"}} scan (unverified)`, "scanned_cutoff", "#277da1"],
         [unverified ? "Unverified candidate maximum" : "Reviewed attribution (conditional)", "observed_cutoff", "#e76f51"],
       ].map(([label, key, color]) => ({{
         label, color,
-        values: rows.map(row => Number.isFinite(row[key]) ? [{{
+        values: rows.map(row => {{
+          if (key === "manual_extra_cutoff") {{
+            const extraPlaces = legacy ? qualificationAssumptions.legacyExtraPlaces : qualificationAssumptions.extraPlaces;
+            const rank = row.pool_slots + extraPlaces;
+            const manualTime = row.manual_pool_times?.[rank - 1];
+            return Number.isFinite(manualTime) ? [{{ year: row.year, value: manualTime,
+              detail: `${{extraPlaces}} manual extra place${{extraPlaces === 1 ? "" : "s"}}; ${{legacy ? "age-group" : "gender-pool"}} rank ${{rank}}; allocation scenario, not observed acceptance` }}] : [];
+          }}
+          return Number.isFinite(row[key]) ? [{{
           year: row.year, value: row[key],
-          detail: key === "estimated_cutoff" ? escapeHtml(`Exploratory match-density estimate; support range ${{qualificationDuration(row.cutoff_estimate.low_time)}} to ${{qualificationDuration(row.cutoff_estimate.high_time)}}; ${{row.cutoff_estimate.sensitive ? "sensitive to match selection" : "not verified acceptance"}}`) : key === "scanned_cutoff" ? escapeHtml(`${{row.cutoff_scan.athlete}}; pool rank ${{row.cutoff_scan.rank}}; ${{row.cutoff_scan.consecutive_absences}} consecutive absences at ranks ${{row.cutoff_scan.gap_start_rank}} to ${{row.cutoff_scan.gap_end_rank}}; not verified acceptance`) : key === "reported_cutoff" ? escapeHtml(`${{row.reported_cutoff_source}}; reported to the ${{row.reported_cutoff_precision}}${{row.reported_cutoff_athlete ? `; ${{row.reported_cutoff_athlete}}` : ""}}`) : key === "observed_cutoff" ? escapeHtml(`${{row.deepest_name}} · pool rank ${{row.deepest_rank}}`) : `${{row.pool_slots}} initial pool slots`,
-        }}] : []),
+          detail: key === "estimated_cutoff" ? escapeHtml(`Exploratory match-density estimate; support range ${{qualificationDuration(row.cutoff_estimate.low_time)}} to ${{qualificationDuration(row.cutoff_estimate.high_time)}}; ${{row.cutoff_estimate.sensitive ? "sensitive to match selection" : "not verified acceptance"}}`) : key === "scanned_cutoff" ? escapeHtml(`${{row.cutoff_scan.athlete}}; ${{legacy ? "age-group" : "gender-pool"}} rank ${{row.cutoff_scan.rank}}; ${{row.cutoff_scan.consecutive_absences}} consecutive absences at ranks ${{row.cutoff_scan.gap_start_rank}} to ${{row.cutoff_scan.gap_end_rank}}; not verified acceptance`) : key === "reported_cutoff" ? escapeHtml(`${{row.reported_cutoff_source}}; reported to the ${{row.reported_cutoff_precision}}${{row.reported_cutoff_athlete ? `; ${{row.reported_cutoff_athlete}}` : ""}}`) : key === "observed_cutoff" ? escapeHtml(`${{row.deepest_name}} · ${{legacy ? "age-group" : "gender-pool"}} rank ${{row.deepest_rank}}`) : `${{row.pool_slots}} initial ${{legacy ? "age-group" : "gender-pool"}} slots`,
+          }}] : [];
+        }}),
       }}));
       categoryPointChart("konaCutoffChart", categories, timeSeries, {{yAxisLabel: legacy ? "Age-group raw time (HH:MM)" : "Age-graded time (HH:MM)"}});
+      categoryPointChart("konaRollDownChart", categories, [{{
+        label: `${{legacy ? "3-absence age-group" : "15-absence gender-pool"}} scan · model-derived assumption`, color: "#277da1",
+        values: rows.map(row => Number.isFinite(row.cutoff_scan?.modeled_roll_down_percent) ? [{{
+          year: row.year, value: row.cutoff_scan.modeled_roll_down_percent,
+          detail: `(${{row.cutoff_scan.rank}} estimated ${{legacy ? "age-group" : "gender-pool"}} rank − ${{row.pool_slots}} initial ${{legacy ? "age-group" : "pool"}} slots) ÷ ${{row.cutoff_scan.rank}} × 100; model-derived, not observed declines`,
+        }}] : []),
+      }}], {{includeZero: true, formatValue: value => `${{value.toFixed(1)}}%`, formatTick: value => `${{value.toFixed(0)}}%`, yAxisLabel: "Model-derived roll-down assumption (%)"}});
       categoryPointChart("konaSkippedChart", categories, [{{
         label: unverified ? "Unverified skipped-place scenario" : "Conditional skipped places", color: "#277da1",
         values: rows.map(row => Number.isFinite(row.estimated_skipped_slots) ? [{{
           year: row.year, value: row.estimated_skipped_slots,
-          detail: `Rank ${{row.deepest_rank}} minus ${{row.pool_slots}} initial pool slots; conditional estimate`,
+          detail: `${{legacy ? "Age-group" : "Gender-pool"}} rank ${{row.deepest_rank}} minus ${{row.pool_slots}} initial slots; conditional estimate`,
         }}] : []),
       }}], {{zeroBasedNice: true, formatValue: count, formatTick: value => Math.round(value).toString(), yAxisLabel: "Conditional skipped places"}});
       const query = document.getElementById("konaSearch").value.trim().toLocaleLowerCase();
@@ -2920,7 +2969,7 @@ def build_html(datasets):
       if (!genderTimeCache.has(key)) {{
         const byYear = {{}};
         DATASETS[eventId].records.forEach(row => {{
-          if (row.gender !== gender || !/^[MF]\\d{{2}}-\\d{{2}}$/.test(row.division)) return;
+          if (gender && row.gender !== gender || !/^[MF]\\d{{2}}-\\d{{2}}$/.test(row.division)) return;
           if (!byYear[row.year]) byYear[row.year] = [];
           byYear[row.year].push(row.overall);
         }});
@@ -2949,7 +2998,7 @@ def build_html(datasets):
       const group = experimentalDistance.value;
       const eventIds = (raceGroups()[group] || []).filter(id => Object.keys(DATASETS[id].course_factors || {{}}).length);
       const model = eventIds.length ? DATASETS[eventIds[0]].course_model || {{}} : {{}};
-      return {{ group, split: experimentalSplit.value, eventIds, model }};
+      return {{ group, split: "overall", eventIds, model }};
     }}
     function fillRaceSelect(select, eventIds, preferred) {{
       const previous = select.value;
@@ -3034,8 +3083,7 @@ def build_html(datasets):
     }}
     function renderBreakdown() {{
       const {{ eventIds, split, model }} = experimentalContext();
-      fillRaceSelect(experimentalBreakdownRace, eventIds, "im_austria");
-      const eventId = experimentalBreakdownRace.value;
+      const eventId = eventIds.includes("im_austria") ? "im_austria" : eventIds[0];
       const body = document.getElementById("experimentalBreakdownBody");
       document.getElementById("experimentalBreakdownTitle").textContent = `Factor breakdown by race-year · ${{split}}`;
       document.getElementById("experimentalBreakdownHead").innerHTML = `<tr><th>Year</th><th>Repeat athletes (overall)</th><th>Race-year factor f</th><th title="Standard error from the spread of the athletes' residuals.">± SE</th><th>Course C</th><th>Season S</th><th>Conditions = f ÷ (C × S)</th></tr>`;
@@ -3064,14 +3112,10 @@ def build_html(datasets):
       if (activeTab !== "experimental") return;
       const {{ group, split, model }} = experimentalContext();
       const athletes = repeatAthleteIndex(group);
-      const tokens = (identityKey(experimentalAthleteSearch.value, "", "") || "").split("|")[0].split(" ").filter(Boolean);
-      const matches = tokens.length
-        ? athletes.filter(athlete => tokens.every(token => athlete.nameKey.includes(token)))
-        : athletes;
-      const selected = [...matches]
+      const selected = [...athletes]
         .filter(athlete => athlete.entries.some(entry => compareYearVisible(entry.year)))
         .sort((left, right) => right.entries.length - left.entries.length || left.nameKey.localeCompare(right.nameKey))
-        .slice(0, tokens.length ? 12 : 3);
+        .slice(0, 3);
       const b = model.returning?.[split];
       document.getElementById("experimentalAthleteHead").innerHTML = `<tr><th>Race</th><th>Year</th><th>Age group</th><th>Raw ${{split}} t</th><th>Age standard A</th><th>t′ = t × A</th><th>Race-year factor f</th><th>Returning b</th><th title="Should be nearly equal within one athlete if the factors are right.">t′ ÷ (f × b)</th><th>Expected = e<sup>a</sup> × f × b ÷ A</th><th>Actual ÷ expected</th></tr>`;
       document.getElementById("experimentalAthleteBody").innerHTML = selected.map(athlete => {{
@@ -3085,16 +3129,14 @@ def build_html(datasets):
           return `<tr><td>${{escapeHtml(DATASETS[entry.eventId].name)}}</td><td>${{yearCell(entry.eventId, entry.year)}}</td><td>${{escapeHtml(entry.division)}}</td><td>${{duration(row.raw)}}</td><td>${{row.standard.toFixed(4)}}</td><td>${{duration(row.graded)}}</td><td>${{row.factor.toFixed(3)}}</td><td>${{entry.returning ? row.returning.toFixed(3) : "1 (first)"}}</td><td><strong>${{duration(row.normalised)}}</strong></td><td>${{duration(row.predicted)}}</td><td${{residual}}>${{signedPercent(row.residual)}}${{row.outlier ? " (outlier)" : ""}}</td></tr>`;
         }}).join("");
       }}).join("") || `<tr><td colspan="11" class="empty">No matched athlete found. Only athletes with at least two usable race-years of this distance are included.</td></tr>`;
-      const shown = tokens.length ? `${{selected.length}} of ${{matches.length}} matching athletes` : `the ${{selected.length}} athletes with the most race-years`;
+      const shown = `the ${{selected.length}} athletes with the most race-years`;
       document.getElementById("experimentalAthleteNote").textContent = `${{athletes.length.toLocaleString()}} matched athletes for this distance; showing ${{shown}}. Read each block left to right: raw time × age standard A = age-graded t′; dividing by the race-year factor f (and by b = ${{Number.isFinite(b) ? b.toFixed(3) : "1"}} for returning results) gives t′ ÷ (f × b). If the factors are right, this column is nearly the same in every row of one athlete; its geometric mean is the athlete's ability e^a. Expected = e^a × f × b ÷ A is the raw time the model predicts; the last column is what the model cannot explain (pacing, a bad day, weather at that athlete's time of day). Values are recomputed in the browser from the published factors.`;
     }}
     function renderHeadToHead() {{
       if (activeTab !== "experimental") return;
       const {{ group, split, eventIds, model }} = experimentalContext();
-      fillRaceSelect(experimentalRaceA, eventIds, "im_hamburg");
-      fillRaceSelect(experimentalRaceB, eventIds, "im_austria");
-      const raceA = experimentalRaceA.value;
-      const raceB = experimentalRaceB.value;
+      const raceA = eventIds.includes("im_hamburg") ? "im_hamburg" : eventIds[0];
+      const raceB = eventIds.includes("im_austria") ? "im_austria" : eventIds.find(id => id !== raceA);
       const body = document.getElementById("experimentalPairBody");
       const metricsText = (count, observed, modelled) => {{
         document.getElementById("experimentalPairCount").textContent = count;
@@ -3150,9 +3192,7 @@ def build_html(datasets):
     }}
     function renderExperimental() {{
       const group = experimentalDistance.value;
-      const split = experimentalSplit.value;
-      const gender = experimentalGender.value;
-      const genderLabel = gender === "Male" ? "men" : "women";
+      const split = "overall";
       const percentFormat = value => `${{value > 0.05 ? "+" : value < -0.05 ? "−" : ""}}${{Math.abs(value).toFixed(1)}}%`;
       const eventIds = (raceGroups()[group] || []).filter(id => Object.keys(DATASETS[id].course_factors || {{}}).length);
       const categories = eventIds.map(id => DATASETS[id].name);
@@ -3223,13 +3263,13 @@ def build_html(datasets):
 
       const percentage = Math.min(100, Math.max(0.1, Number(experimentalPercentile.value) || 20));
       const percentageLabel = Number.isInteger(percentage) ? percentage.toFixed(0) : percentage.toFixed(1);
-      document.getElementById("experimentalFieldTitle").textContent = `Course-adjusted field strength · top ${{percentageLabel}}% of ${{genderLabel}}`;
+      document.getElementById("experimentalFieldTitle").textContent = `Course-adjusted all-cohort field strength · top ${{percentageLabel}}%`;
       categoryPointChart(
         "experimentalFieldChart",
         categories,
         yearSeries(eventIds, (id, year) => {{
           const factor = courseFactor(id, year);
-          const values = ageGroupTimesByYear(id, gender)[year] || [];
+          const values = ageGroupTimesByYear(id)[year] || [];
           if (!factor || !values.length) return null;
           const rank = Math.max(1, Math.ceil(values.length * percentage / 100));
           const cutoff = values[rank - 1];
@@ -3242,13 +3282,18 @@ def build_html(datasets):
       );
 
       const qualifyingIds = eventIds.filter(isQualifyingEvent);
-      populateAgeGroupSelect(experimentalAgeGroup, compareAgeGroups(qualifyingIds));
-      const ageGroup = experimentalAgeGroup.value;
-      const neededByEvent = Object.fromEntries(qualifyingIds.map(id => [id, Object.fromEntries(
-        (ageGroup ? raceQualificationYearlyValues(id, gender, ageGroup) : []).map(entry => [entry.year, entry])
-      )]));
+      const neededByEvent = Object.fromEntries(qualifyingIds.map(id => [id, {{}}]));
+      qualifyingIds.forEach(id => qualificationYears(id, qualificationSystem).forEach(year => {{
+        const values = ["Male", "Female"].flatMap(rowGender => compareAgeGroups([id]).map(ageGroup =>
+          qualificationStandard(id, year, rowGender, ageGroup, qualificationSystem)?.needed
+        )).filter(Number.isFinite);
+        if (values.length) neededByEvent[id][year] = {{
+          value: quantile(values.sort((left, right) => left - right), 0.5),
+          detail: `Median across ${{values.length}} available gender/age-group targets`,
+        }};
+      }}));
       const neededIds = qualifyingIds.filter(id => Object.keys(neededByEvent[id]).some(year => courseFactor(id, year)));
-      document.getElementById("experimentalNeededTitle").textContent = `Course-adjusted time needed to qualify · ${{ageGroup ? divisionFor(gender, ageGroup) : ""}}`;
+      document.getElementById("experimentalNeededTitle").textContent = "Course-adjusted median target across all divisions";
       categoryPointChart(
         "experimentalNeededChart",
         neededIds.map(id => DATASETS[id].name),
@@ -3731,7 +3776,6 @@ def build_html(datasets):
     const easiestGender = document.getElementById("easiestGender");
     const easiestAgeGroup = document.getElementById("easiestAgeGroup");
     const easiestTime = document.getElementById("easiestTime");
-    const easiestCutoffMode = document.getElementById("easiestCutoffMode");
     const easiestDeclines = document.getElementById("easiestDeclines");
     const easiestSearch = document.getElementById("easiestSearch");
     const easiestManualRace = document.getElementById("easiestManualRace");
@@ -3980,17 +4024,30 @@ def build_html(datasets):
       const target = DATASETS[eventId].historical_qualification?.targets?.find(row => row.year === year && row.division === standard.division);
       const sourceCycle = target?.standard_cycle || target?.source?.allocation_cycle
         || (target?.source?.cycles?.length === 1 ? target.source.cycles[0] : null);
-      const candidates = DATASETS[eventId].group === "im" ? Object.values(DATASETS.im_kona?.kona_traces || {{latest: defaultTrace}}).filter(Boolean).flatMap(trace =>
-        (trace.summaries?.all || []).filter(row => row.event_id === eventId && row.year === year && row.gender === gender
+      const traces = Object.values(DATASETS.im_kona?.kona_traces || {{latest: defaultTrace}}).filter(Boolean);
+      const currentCycle = DATASETS[eventId].qualification?.standard_cycle;
+      const candidates = DATASETS[eventId].group === "im" ? traces.flatMap(trace => {{
+        const sourceRows = system === "current"
+          ? String(trace.counterfactual_standard_cycle) === String(currentCycle) ? trace.counterfactual_summaries || [] : []
+          : trace.summaries?.all || [];
+        return sourceRows.filter(row => row.event_id === eventId && row.year === year && row.gender === gender
           && (!row.slot_scope || row.slot_scope === standard.scope) && (!row.division || row.division === standard.division))
-          .map(pool => ({{trace, pool}}))) : [];
-      const compatible = system === "historical" && sourceCycle ? candidates.filter(entry => entry.trace.year === String(sourceCycle)) : candidates;
-      const trace = compatible.length === 1 ? compatible[0].trace : defaultTrace;
+          .map(pool => ({{trace, pool}}));
+      }}) : [];
+      const compatible = system === "historical"
+        ? sourceCycle ? candidates.filter(entry => entry.trace.year === String(sourceCycle)) : [] : candidates;
+      const trace = compatible.length === 1 ? compatible[0].trace
+        : system === "historical" && standard.scope === "age group" && !sourceCycle ? null : defaultTrace;
       const pool = compatible.length === 1 ? compatible[0].pool : null;
       const estimate = mode === "reported" ? {{time: pool?.reported_cutoff}} : mode === "density" ? pool?.cutoff_estimate : pool?.cutoff_scan;
-      const ratio = trace?.standards?.[standard.division];
-      const label = mode === "reported" ? "Reported cutoff" : mode === "density" ? "Density estimate" : "15-absence scan";
-      const metadata = {{ ...standard, cutoffPool: pool, cutoffCycle: trace?.year, estimatedCutoffUsed: false,
+      const ratio = (system === "current" ? trace?.counterfactual_standards : trace?.standards)?.[standard.division];
+      const scanScope = pool?.slot_scope === "age group" ? "age-group" : "gender-pool";
+      const scanLabel = pool?.cutoff_scan?.consecutive_absences
+        ? `${{pool.cutoff_scan.consecutive_absences}}-absence ${{scanScope}} scan` : "Absence scan";
+      const label = mode === "reported" ? "Reported cutoff" : mode === "density" ? "Match-density boundary" : scanLabel;
+      const evidenceCycle = system === "current" ? trace?.counterfactual_standard_cycle : trace?.year;
+      const evidenceRoster = system === "current" ? trace?.year : null;
+      const metadata = {{ ...standard, cutoffPool: pool, cutoffCycle: evidenceCycle, cutoffRoster: evidenceRoster, estimatedCutoffUsed: false,
         strictNeeded: strict.needed, available: true, mode,
         cutoffSource: mode === "places" ? "Slot allocation + extra places" : "Strict allocation" }};
       if (mode === "places" || mode === "strict") return metadata;
@@ -4000,13 +4057,15 @@ def build_html(datasets):
         unavailableReason: reason, cutoffSource: `${{qualificationAssumptions.fallback ? "Strict fallback" : "No estimate"}}: ${{reason}}` }});
       if (standard.scope !== "gender" && system !== "historical") return unavailable("legacy age-group rules");
       if (isModifiedCourse(eventId, year)) return unavailable("modified course");
+      if (system === "historical" && standard.scope === "age group" && !sourceCycle) return unavailable("no confirmed compatible evidence cycle");
       if (compatible.length > 1) return unavailable("ambiguous qualifying cycle");
+      if (mode === "reported" && (!Number.isFinite(estimate?.time) || !pool?.reported_cutoff_source)) return unavailable("no documented matching reported cutoff");
       if (standard.scope === "age group") {{
-        if (mode === "reported" || !Number.isFinite(estimate?.time) || estimate.time <= 0) return unavailable("no matching age-group estimate");
+        if (!Number.isFinite(estimate?.time) || estimate.time <= 0) return unavailable("no matching age-group estimate");
         if (pool.slot_scope !== "age group" || pool.division !== standard.division || pool.pool_slots !== standard.slots || standard.slots <= 0) return unavailable("changed age-group allocation");
-        return {{...metadata, needed: estimate.time, ageGraded: null, poolEquivalent: null,
-          precision: mode === "density" ? "estimate" : "second", estimatedCutoffUsed: true,
-          cutoffSource: `${{label}}: Kona ${{trace.year}} cycle, ${{standard.division}} raw ranking (unverified)`}};
+        return {{...metadata, needed: mode === "density" || mode === "scan" ? Math.max(strict.needed, estimate.time) : estimate.time, ageGraded: null, poolEquivalent: null,
+          precision: mode === "reported" ? pool.reported_cutoff_precision : mode === "density" ? "estimate" : "second", estimatedCutoffUsed: true,
+          cutoffSource: `${{label}}: Kona ${{trace.year}} cycle, ${{standard.division}} raw ranking (${{mode === "reported" ? "documented report" : mode === "density" ? "exploratory breakpoint; target bounded by strict allocation" : "unverified"}})`}};
       }}
       if (system === "historical" && !DATASETS[eventId].historical_qualification?.targets?.some(row =>
         row.year === year && row.division === standard.division && String(row.standard_cycle) === trace?.year)) {{
@@ -4015,10 +4074,11 @@ def build_html(datasets):
       if (!Number.isFinite(estimate?.time) || estimate.time <= 0 || !Number.isFinite(ratio) || ratio <= 0) return unavailable("no matching estimate");
       if (system !== "historical" && (standard.performanceSlots !== pool.pool_slots || Math.abs(standard.ratio - ratio) > 0.000001)) return unavailable("changed allocation or standard");
       const poolEquivalent = estimate.time / ratio;
+      const modeledNeeded = standard.winner === null ? Infinity : Math.max(standard.winner, poolEquivalent);
       return {{ ...metadata, ratio, ageGraded: estimate.time, poolEquivalent,
-        needed: standard.winner === null ? Infinity : Math.max(standard.winner, poolEquivalent),
+        needed: mode === "density" || mode === "scan" ? Math.max(strict.needed, modeledNeeded) : modeledNeeded,
         precision: mode === "reported" ? pool.reported_cutoff_precision : mode === "density" ? "estimate" : "second",
-        estimatedCutoffUsed: true, cutoffSource: `${{label}}: Kona ${{trace.year}} cycle (${{mode === "reported" ? "reported, not independently verified" : "unverified"}})` }};
+        estimatedCutoffUsed: true, cutoffSource: `${{label}}: Kona ${{system === "current" ? `${{trace.year}} starters, ${{evidenceCycle}} current standard` : `${{trace.year}} cycle`}} (${{mode === "reported" ? "reported, not independently verified" : mode === "density" ? "exploratory breakpoint; target bounded by strict allocation" : "unverified"}})` }};
     }}
     function easiestPoolEstimateCell(pool) {{
       if (!pool) return "Not available";
@@ -4026,7 +4086,9 @@ def build_html(datasets):
       const scan = pool.cutoff_scan;
       const densityTime = Number.isFinite(density?.time) ? `~${{duration(Math.round(density.time / 60) * 60).slice(0, 5)}}` : "Unknown";
       const scanTime = Number.isFinite(scan?.time) ? qualificationDuration(scan.time) : "Unknown";
-      return `<strong>${{escapeHtml(pool.year)}}</strong> · Density ${{densityTime}}<br>15 absences ${{scanTime}}<br><small>Unverified; Kona ${{escapeHtml(DATASETS.im_kona.kona_trace.year)}} cycle${{density?.sensitive ? "; density is match-sensitive" : ""}}</small>`;
+      const ageGroupScope = pool.slot_scope === "age group";
+      const scanLabel = `${{scan?.consecutive_absences ?? (ageGroupScope ? 3 : 15)}}-absence ${{ageGroupScope ? "age-group" : "gender-pool"}} scan`;
+      return `<strong>${{escapeHtml(pool.year)}}</strong> · Density boundary ${{densityTime}}<br>${{scanLabel}} ${{scanTime}}<br><small>Exploratory match density, not acceptance; Kona ${{escapeHtml(DATASETS.im_kona.kona_trace.year)}} cycle${{density?.sensitive ? "; sensitive to single-race matches" : ""}}</small>`;
     }}
     function renderEasiest() {{
       if (activeTab !== "easiest") return;
@@ -4037,9 +4099,8 @@ def build_html(datasets):
       const ageGroup = easiestAgeGroup.value;
       const division = divisionFor(gender, ageGroup);
       const system = qualificationSystem;
-      const cutoffMode = qualificationAssumptions.mode;
-      easiestCutoffMode.value = cutoffMode;
-      easiestDeclines.disabled = cutoffMode !== "places";
+      const cutoffMode = "strict";
+      easiestDeclines.disabled = dashboardContext.distance !== "im";
       const extraPlaces = Math.max(0, Math.round(Number(easiestDeclines.value) || 0));
       const model = groupModel(group);
       const profile = easiestProfile(group, division);
@@ -4097,11 +4158,9 @@ def build_html(datasets):
       const best = races.find(race => race.entries.length);
       document.getElementById("easiestBestMetric").textContent = best ? DATASETS[best.eventId].name.replace("IRONMAN ", "") : "\u2014";
       document.getElementById("easiestChanceMetric").textContent = best ? `${{Math.round(100 * best.chance)}}%` : "\u2014";
-      const systemLabel = cutoffMode === "places"
-        ? system === "historical" ? "actual historical rules and slots" : "current rules and allocations"
-        : cutoffMode === "strict" ? "strict allocation" : cutoffMode === "reported" ? "reported pool target" : cutoffMode === "density" ? "density-estimated pool target" : "15-absence-estimated pool target";
+      const systemLabel = system === "historical" ? "historical rules, strict allocation" : "current-pool counterfactual, strict allocation";
       document.getElementById("easiestRankingTitle").textContent = `Where you qualify most easily \u00b7 ${{division}} \u00b7 ${{systemLabel}}`;
-      document.getElementById("easiestRankingHead").innerHTML = `<tr><th>Race</th><th title="Latest published allocation; estimates describe their original cycle, not this allocation.">Slots</th><th>Race-years</th><th title="Latest covered, unmodified edition for the selected gender; these are gender-pool age-graded times, not raw finish times.">Estimated pool age-graded cutoff</th><th title="Race-years using the selected estimate; remaining years use strict targets. Extra places apply only in allocation mode.">Cutoff coverage</th><th title="Season-adjusted overall course effect.">Course</th><th>Your expected time</th><th>Time needed</th><th>Median margin</th><th>Target met in</th><th>Estimated chance</th><th title="Your expected time relative to same-level athletes on this course; negative suits you.">Course fit for you</th><th title="Strict allocation only, not an inferred count of accepted slots.">Allocated qualifiers / 100 starters</th></tr>`;
+      document.getElementById("easiestRankingHead").innerHTML = `<tr><th>Race</th><th title="Latest published allocation; estimates describe their original cycle, not this allocation.">Slots</th><th>Race-years</th><th title="Density estimate and absence scan in the race-year's compatible scope; missing or incompatible evidence is unavailable.">Density & scope-specific scan</th><th title="Race-years using the selected estimate; remaining years use strict targets. Extra places apply only in allocation mode.">Cutoff coverage</th><th title="Season-adjusted overall course effect.">Course</th><th>Your expected time</th><th>Time needed</th><th>Median margin</th><th>Target met in</th><th>Estimated chance</th><th title="Your expected time relative to same-level athletes on this course; negative suits you.">Course fit for you</th><th title="Strict allocation only, not an inferred count of accepted slots.">Allocated qualifiers / 100 starters</th></tr>`;
       rankingBody.innerHTML = races.map((race, index) => {{
         if (!race.entries.length) return `<tr><td>${{escapeHtml(DATASETS[race.eventId].name)}}</td><td>${{slotText(race.eventId)}}</td><td colspan="11">No compatible target for selected race years. Not ranked.</td></tr>`;
         const percent = Math.round(100 * race.chance);
@@ -4461,21 +4520,8 @@ def build_html(datasets):
     const compareScatterAgeGroup = document.getElementById("compareScatterAgeGroup");
     const compareScatterGender = document.getElementById("compareScatterGender");
     [compareScatterDistance, compareScatterAgeGroup, compareScatterGender].forEach(control => control.addEventListener("change", renderMeanQualificationCompare));
-    const qualificationSystemControls = [...document.querySelectorAll(".qualification-system")];
-    qualificationSystemControls.forEach(control => control.addEventListener("change", () => {{
-      qualificationSystem = control.value;
-      qualificationSystemControls.forEach(item => item.value = qualificationSystem);
-      renderQualification();
-      renderCompare();
-      renderOdds();
-      renderExperimental();
-      renderEasiest();
-    }}));
     [oddsDistance, oddsGender, oddsAgeGroup, oddsTimeBasis].forEach(control => control.addEventListener("change", renderOdds));
-    [experimentalDistance, experimentalSplit, experimentalGender, experimentalAgeGroup].forEach(control => control.addEventListener("change", renderExperimental));
-    experimentalBreakdownRace.addEventListener("change", renderBreakdown);
-    experimentalAthleteSearch.addEventListener("input", renderAthleteExplorer);
-    [experimentalRaceA, experimentalRaceB].forEach(control => control.addEventListener("change", renderHeadToHead));
+    experimentalDistance.addEventListener("change", renderExperimental);
     compareSplitDistance.addEventListener("change", renderSplitDistributions);
     document.getElementById("compareStatisticsDistance").addEventListener("change", renderRaceStatisticsCompare);
     document.getElementById("compareYears").addEventListener("change", event => {{
@@ -4499,7 +4545,6 @@ def build_html(datasets):
       renderEasiestTab();
     }});
     easiestGender.addEventListener("change", renderEasiestTab);
-    easiestCutoffMode.addEventListener("change", renderEasiest);
     [easiestAgeGroup, easiestDetailRace].forEach(control => control.addEventListener("change", renderEasiest));
     easiestDeclines.addEventListener("input", renderEasiest);
     easiestTime.addEventListener("input", () => {{
@@ -4549,6 +4594,22 @@ def build_html(datasets):
 </html>"""
 
 
+def build_index_html():
+    return """<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="refresh" content="0; url=dashboard.html">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>IRONMAN qualification analysis</title>
+</head>
+<body>
+  <p><a href="dashboard.html">Open the IRONMAN qualification dashboard</a></p>
+</body>
+</html>
+"""
+
+
 def main():
     ensure_output_directories()
     datasets = load_dashboard_data()
@@ -4557,6 +4618,7 @@ def main():
         f"window.DASHBOARD_DATA = {data_json};\n", encoding="utf-8"
     )
     OUTPUT_FILE.write_text(build_html(datasets), encoding="utf-8")
+    INDEX_FILE.write_text(build_index_html(), encoding="utf-8")
     counts = ", ".join(
         f"{event['name']}: {len(event['records'])}"
         for event in datasets.values()
@@ -4564,6 +4626,7 @@ def main():
     print(f"Embedded finishers ({counts}).")
     print(f"Saved dashboard to {OUTPUT_FILE.resolve()}")
     print(f"Saved dashboard data to {DATA_FILE.resolve()}")
+    print(f"Saved Pages entry point to {INDEX_FILE.resolve()}")
 
 
 if __name__ == "__main__":

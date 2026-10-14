@@ -118,11 +118,12 @@ def scan_pool_cutoff(pool_times, matched_ranks, initial_slots, consecutive_absen
     estimate = {"time": None, "rank": None, "athlete": None,
                 "matched_pool_starters": len(ranks), "consecutive_absences": consecutive_absences,
                 "criterion_met": False, "gap_start_rank": None, "gap_end_rank": None,
+                "modeled_roll_down_percent": None,
                 "reason": "Pool ends before the absence criterion is met"}
     if initial_slots <= 0:
         estimate["reason"] = "No initial performance-pool slots"
         return estimate
-    last_match = max((rank for rank in ranks if rank <= initial_slots), default=None)
+    last_match = None
     absences = 0
     for rank in range(initial_slots + 1, pool_size + 1):
         if rank in ranks:
@@ -135,11 +136,16 @@ def scan_pool_cutoff(pool_times, matched_ranks, initial_slots, consecutive_absen
                     "gap_start_rank": rank - consecutive_absences + 1, "gap_end_rank": rank,
                     "rank": last_match,
                     "time": math.floor(pool_times[last_match - 1]) if last_match is not None else None,
-                    "reason": None if last_match is not None else "No preceding Kona starter matched in the pool"}
+                    "modeled_roll_down_percent": round(100 * (last_match - initial_slots) / last_match, 2)
+                        if last_match is not None and initial_slots > 0 else None,
+                    "reason": None if last_match is not None else
+                        "Strict allocation was the last supported boundary; no post-allocation match before the absence criterion"}
     return estimate
 
 
-def build_kona_trace(kona_frame, calendar, events, read_results, event_names, year="2026", historical_targets=None):
+def build_kona_trace(kona_frame, calendar, events, read_results, event_names, year="2026", historical_targets=None,
+                     ranking_cycle=None):
+    ranking_cycle = str(ranking_cycle or year)
     starters = []
     identities = defaultdict(list)
     kona_rows = kona_frame.dropna(how="all").to_dict("records")
@@ -189,7 +195,7 @@ def build_kona_trace(kona_frame, calendar, events, read_results, event_names, ye
             missing.append({**info, "reason": "No cycle-specific slot allocation"})
             continue
         raw_rows = raw.to_dict("index")
-        legacy = str(year) not in qualification_full.STANDARDS
+        legacy = ranking_cycle not in qualification_full.STANDARDS
         cohorts = []
         if legacy:
             targets = (historical_targets or {}).get((event_id, race_year), [])
@@ -222,7 +228,7 @@ def build_kona_trace(kona_frame, calendar, events, read_results, event_names, ye
                 })
             automatic = set()
         else:
-            result = qualification_full.process_dataframe(race_year, raw.copy(), total_slots=total_slots, cycle=str(year))
+            result = qualification_full.process_dataframe(race_year, raw.copy(), total_slots=total_slots, cycle=ranking_cycle)
             if result is not None:
                 for gender in ("male", "female"):
                     cohorts.append({
@@ -278,7 +284,8 @@ def build_kona_trace(kona_frame, calendar, events, read_results, event_names, ye
             race_matches.append((starter, entry))
         for cohort in cohorts:
             gender = cohort["gender"]
-            reported = REPORTED_POOL_CUTOFFS.get((str(year), event_id, race_year, gender), {}) if not legacy else {}
+            reported = REPORTED_POOL_CUTOFFS.get((str(year), event_id, race_year, gender), {}) \
+                if not legacy and ranking_cycle == str(year) else {}
             pools.append({
                 **info, **{key: value for key, value in cohort.items() if key != "row_ids"},
                 "total_slots": total_slots, "pool_size": len(cohort["pool_times"]),
@@ -310,6 +317,8 @@ def build_kona_trace(kona_frame, calendar, events, read_results, event_names, ye
                 "candidate_skipped_slots": max(0, deepest[1]["pool_rank"] - pool["pool_slots"])
                     if deepest and pool["pool_slots"] > 0 else None,
             })
+            if mode == "all":
+                rows[-1]["manual_pool_times"] = pool["pool_times"]
     for all_row, single_row, pool in zip(summaries["all"], summaries["single"], pools):
         estimate = all_row["cutoff_estimate"].copy()
         single = single_row["cutoff_estimate"]
@@ -326,15 +335,17 @@ def build_kona_trace(kona_frame, calendar, events, read_results, event_names, ye
                     estimate[f"{bound}_time"], single[f"{bound}_time"], estimate["time"], single["time"])
         all_row["cutoff_estimate"] = single_row["cutoff_estimate"] = estimate
         scan = scan_pool_cutoff(pool["pool_times"],
-                               [entry["pool_rank"] for _, entry in pool["race_matches"]], pool["pool_slots"])
+                               [entry["pool_rank"] for _, entry in pool["race_matches"]], pool["pool_slots"],
+                               consecutive_absences=3 if pool["slot_scope"] == "age group" else 15)
         scan["athlete"] = next((starter["name"] for starter, entry in pool["race_matches"]
                                 if scan["rank"] is not None and entry["pool_rank"] == scan["rank"]), None)
         all_row["cutoff_scan"] = single_row["cutoff_scan"] = scan
     return {
         "year": str(year), "starters": starters, "summaries": summaries,
-        "standards": {division: ratio for gender_standards in qualification_full.STANDARDS.get(str(year), ())
+        "standard_cycle": ranking_cycle,
+        "standards": {division: ratio for gender_standards in qualification_full.STANDARDS.get(ranking_cycle, ())
                   for division, ratio in gender_standards.items()},
-        "slot_scope": "gender" if str(year) in qualification_full.STANDARDS else "age group",
+        "slot_scope": "gender" if ranking_cycle in qualification_full.STANDARDS else "age group",
         "covered_races": covered, "missing_races": missing,
         "matched_starters": sum(bool(starter["matches"]) for starter in starters),
         "multiple_candidates": sum(len(starter["matches"]) > 1 for starter in starters),
