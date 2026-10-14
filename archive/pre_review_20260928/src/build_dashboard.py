@@ -1,0 +1,2610 @@
+import json
+import re
+from pathlib import Path
+
+import pandas as pd
+import qualification_full
+import qualification_703 as qualification_half
+from gpx_course_model import Rider, read_gpx, simulate
+from project_paths import (
+  COACHCOX_ALLOCATION_FILE,
+  CACHE_DIR,
+  DIST_DIR,
+  GPX_TRACK_DIR,
+  RACE_HISTORY_DIR,
+  ensure_output_directories,
+)
+from scrape_qualifying_races import parse_races as parse_coachcox_races
+
+from split_time_analysis import (
+    SPLIT_COLUMNS,
+    parse_duration,
+)
+
+
+OUTPUT_FILE = DIST_DIR / "dashboard.html"
+DATA_FILE = DIST_DIR / "dashboard_data.js"
+COACHCOX_CACHE_DIR = CACHE_DIR / "CoachCoxQualificationPages"
+FULL_DISTANCE = {"swim": 3800, "bike": 180, "run": 42.2}
+HALF_DISTANCE = {"swim": 1900, "bike": 90, "run": 21.1}
+YEAR_PATTERN = re.compile(r"(20\d{2})")
+PRO_DIVISIONS = {"MPRO", "FPRO"}
+HALF_DISTANCE_PATTERN = re.compile(r"70\.?3|703", re.IGNORECASE)
+DEFAULT_TOTAL_SLOTS = 40
+DEFAULT_SLOTS_PER_GENDER = 25
+# Fixed Kona slot allocations per full-distance race, from
+# docs/im_qualification_race_slots.md.
+# (used for every historical year).
+RACE_SLOTS_IM = {
+    "im_austria": 40,
+    "im_france": 40,
+    "im_frankfurt": 60,
+    "im_hamburg": 60,
+    "im_italy": 40,
+  "im_kalmar": 40,
+  "im_kopenhagen": 40,
+  "im_tallinn": 40,
+}
+# Fixed 70.3 Worlds per-gender slot allocations, from
+# docs/im703_qualification_race_slots.md.
+RACE_SLOTS_703 = {
+    "im_703_zellamsee": {"male": 35, "female": 35},
+}
+COACHCOX_EVENT_NAMES = {
+  "im_austria": "Ironman Austria",
+  "im_france": "Ironman France",
+  "im_frankfurt": "Ironman Frankfurt",
+  "im_hamburg": "Ironman Hamburg",
+  "im_italy": "Ironman Italy",
+  "im_kalmar": "Ironman Sweden",
+  "im_kopenhagen": "Ironman Copenhagen",
+  "im_tallinn": "Ironman Tallinn",
+}
+EVENT_DISPLAY_NAMES = {
+  "im_kalmar": "IRONMAN Kalmar",
+  "im_kopenhagen": "IRONMAN Copenhagen",
+  "im_tallinn": "IRONMAN Tallinn",
+}
+GPX_EVENT_FILES = {
+  "im_austria": "austria.gpx",
+  "im_hamburg": "hamburg.gpx",
+  "im_italy": "italy.gpx",
+  "im_kalmar": "kalmar.gpx",
+  "im_tallinn": "tallinn.gpx",
+}
+LEGACY_RANK_OFFSETS = (1, 2, 5)
+
+
+def finishers_only(frame):
+    """Keep only rows with an official 'FIN' result, dropping DNS/DNF/DQ/NC."""
+    if "Finish" not in frame.columns:
+        return frame
+    return frame.loc[frame["Finish"].astype(str).str.strip().str.upper().eq("FIN")]
+
+
+def discover_events():
+    """Build one dashboard event per race-history subfolder, with one CSV per year."""
+    events = {}
+    for folder in sorted(RACE_HISTORY_DIR.iterdir()):
+        if not folder.is_dir():
+            continue
+        year_files = {}
+        for csv_file in sorted(folder.glob("*.csv")):
+            match = YEAR_PATTERN.search(csv_file.stem)
+            if match:
+                year_files[match.group(1)] = csv_file
+        if not year_files:
+            continue
+
+        event_id = folder.name.lower()
+        display_name = EVENT_DISPLAY_NAMES.get(
+          event_id,
+          folder.name.replace("IM_", "IRONMAN ").replace("_", " "),
+        )
+        group = "703" if HALF_DISTANCE_PATTERN.search(folder.name) else "im"
+        if group == "703":
+            slots = RACE_SLOTS_703.get(
+                event_id, {"male": DEFAULT_SLOTS_PER_GENDER, "female": DEFAULT_SLOTS_PER_GENDER}
+            )
+            note = (
+                f"Estimate: {slots['male']} men / {slots['female']} women fixed slot allocation; "
+                "all age-group winners accept; no roll-down."
+            )
+        else:
+            slots = RACE_SLOTS_IM.get(event_id, DEFAULT_TOTAL_SLOTS)
+            note = (
+                f"Estimate: {slots} total slots (fixed allocation); "
+                "performance-pool slots split by eligible finisher representation "
+                "(most recent year shown by default); all age-group winners accept; no roll-down."
+            )
+        events[event_id] = {
+            "name": display_name,
+            "subtitle": display_name,
+            "years": dict(sorted(year_files.items())),
+            "distances": HALF_DISTANCE if group == "703" else FULL_DISTANCE,
+            "default_from": "09:00:00",
+            "default_to": "09:30:00",
+            "group": group,
+            "qualification_slots": slots,
+            "qualification_note": note,
+        }
+    return events
+
+
+EVENTS = discover_events()
+QUALIFICATION_MODULES = {
+    event_id: (qualification_half if event["group"] == "703" else qualification_full)
+    for event_id, event in EVENTS.items()
+}
+
+
+def load_historical_slot_sources():
+  matches = {}
+  wanted_names = {name: event_id for event_id, name in COACHCOX_EVENT_NAMES.items()}
+  for cache_file in sorted(COACHCOX_CACHE_DIR.glob("qualification_*.html")):
+    cycle_match = YEAR_PATTERN.search(cache_file.stem)
+    if not cycle_match:
+      continue
+    cycle = cycle_match.group(1)
+    source_url = f"https://coachcox.co.uk/imstats/im/qualification/{cycle}/races/"
+    rows = parse_coachcox_races(
+      cache_file.read_text(encoding="utf-8"), source_url, cycle
+    )
+    for row in rows:
+      event_id = wanted_names.get(row["race_name"])
+      if event_id:
+        matches.setdefault((event_id, row["event_year"]), []).append(row)
+
+  sources = {}
+  for key, rows in matches.items():
+    performance_rows = [
+      row for row in rows if int(row["qualification_cycle"]) >= 2026
+    ]
+    selected = performance_rows or rows
+    male_values = [
+      row["male_qualifiers"]
+      for row in selected
+      if row["male_qualifiers"] is not None
+    ]
+    female_values = [
+      row["female_qualifiers"]
+      for row in selected
+      if row["female_qualifiers"] is not None
+    ]
+    combined_values = [
+      row["combined_qualifiers"]
+      for row in selected
+      if row["combined_qualifiers"] is not None
+    ]
+    male_slots = max(male_values) if male_values else None
+    female_slots = max(female_values) if female_values else None
+    combined_slots = max(combined_values) if combined_values else None
+    sources[key] = {
+      "method": "performance" if performance_rows else "legacy",
+      "male": male_slots,
+      "female": female_slots,
+      "combined": combined_slots,
+      "total": (
+        (male_slots or 0) + (female_slots or 0)
+        if male_slots is not None or female_slots is not None
+        else combined_slots
+      ),
+      "cycles": sorted({str(row["qualification_cycle"]) for row in selected}),
+      "source_url": selected[0]["source_url"],
+    }
+
+  # The 2026 70.3 World Championship list publishes 35 slots per gender for
+  # Zell am See-Kaprun. Earlier 70.3 allocations are not available locally.
+  for year in ("2025", "2026"):
+    sources[("im_703_zellamsee", year)] = {
+      "method": "performance",
+      "male": 35,
+      "female": 35,
+      "combined": None,
+      "total": 70,
+      "cycles": ["2026"],
+      "source_url": "https://www.ironman.com/races/im703-world-championship-2026/qualifying-events-2026",
+    }
+  return sources
+
+
+HISTORICAL_SLOT_SOURCES = load_historical_slot_sources()
+
+
+def load_exact_age_group_allocations():
+  if not COACHCOX_ALLOCATION_FILE.exists():
+    return {}
+  return json.loads(COACHCOX_ALLOCATION_FILE.read_text(encoding="utf-8"))
+
+
+EXACT_AGE_GROUP_ALLOCATIONS = load_exact_age_group_allocations()
+
+
+def prepare_eligible_age_group_rows(frame, module):
+  frame = frame.dropna(how="all").copy()
+  gender_column = "Gender" if "Gender" in frame.columns else "gender"
+  required = {gender_column, "Division", "Overall Time"}
+  if frame.empty or not required.issubset(frame.columns):
+    return pd.DataFrame()
+
+  frame["gender_normalized"] = (
+    frame[gender_column].astype(str).str.strip().str.title()
+  )
+  frame["Division"] = frame["Division"].astype(str).str.strip().str.upper()
+  frame = frame[
+    frame["gender_normalized"].isin(("Male", "Female"))
+    & ~frame["Division"].isin(module.NON_AGE_GROUP_DIVISIONS)
+    & frame["Division"].str.match(r"^[MF]\d{2}-\d{2}$", na=False)
+  ].copy()
+  if "Finish" in frame.columns:
+    frame["finish_status"] = frame["Finish"].astype(str).str.strip().str.upper()
+  else:
+    frame["finish_status"] = "FIN"
+  frame["finish_td"] = frame["Overall Time"].map(module.parse_time)
+  return frame
+
+
+def allocate_proportional_slots(starter_counts, total_slots):
+  represented = {division: int(count) for division, count in starter_counts.items() if count > 0}
+  if not represented or not total_slots:
+    return {}
+  if total_slots < len(represented):
+    return {
+      division: int(index < total_slots)
+      for index, division in enumerate(
+        sorted(represented, key=lambda item: (-represented[item], item))
+      )
+    }
+
+  allocations = {division: 1 for division in represented}
+  remaining = total_slots - len(represented)
+  total_starters = sum(represented.values())
+  quotas = {
+    division: remaining * count / total_starters
+    for division, count in represented.items()
+  }
+  extras = {division: int(quota) for division, quota in quotas.items()}
+  for division in sorted(
+    represented,
+    key=lambda item: (
+      quotas[item] - extras[item], represented[item], item
+    ),
+    reverse=True,
+  )[: remaining - sum(extras.values())]:
+    extras[division] += 1
+  return {
+    division: allocations[division] + extras[division]
+    for division in represented
+  }
+
+
+def allocate_historical_slots(starter_counts, source):
+  if source["male"] is not None or source["female"] is not None:
+    allocations = {}
+    for prefix, key in (("M", "male"), ("F", "female")):
+      gender_counts = {
+        division: count
+        for division, count in starter_counts.items()
+        if division.startswith(prefix)
+      }
+      allocations.update(
+        allocate_proportional_slots(gender_counts, source[key] or 0)
+      )
+    return allocations
+  return allocate_proportional_slots(starter_counts, source["combined"])
+
+
+def exact_historical_allocation(event_id, year, source):
+  detail = EXACT_AGE_GROUP_ALLOCATIONS.get(event_id, {}).get(year)
+  if not detail:
+    return None
+  allocations = {
+    division: int(slots)
+    for division, slots in detail.get("allocations", {}).items()
+    if int(slots) > 0
+  }
+  male_slots = sum(
+    slots for division, slots in allocations.items() if division.startswith("M")
+  )
+  female_slots = sum(
+    slots for division, slots in allocations.items() if division.startswith("F")
+  )
+  if source["male"] is not None or source["female"] is not None:
+    if male_slots != (source["male"] or 0) or female_slots != (source["female"] or 0):
+      return None
+  else:
+    expected = source["combined"] or 0
+    if not male_slots or not female_slots or abs(male_slots + female_slots - expected) > 1:
+      return None
+  return allocations, detail
+
+
+def cutoff_at_rank(values, rank):
+  index = rank - 1
+  return values[index] if 0 <= index < len(values) else None
+
+
+def load_historical_qualification_data(event_id, event):
+  module = QUALIFICATION_MODULES[event_id]
+  rows = []
+  unavailable_years = []
+  for year, csv_file in event["years"].items():
+    source = HISTORICAL_SLOT_SOURCES.get((event_id, year))
+    if source is None:
+      unavailable_years.append(year)
+      continue
+
+    frame = prepare_eligible_age_group_rows(pd.read_csv(csv_file), module)
+    if frame.empty:
+      unavailable_years.append(year)
+      continue
+    starters = frame[~frame["finish_status"].eq("DNS")]
+    starter_counts = starters.groupby("Division").size().to_dict()
+    automatic_divisions = set()
+    if "Age Group Rank" in frame.columns:
+      age_group_rank = pd.to_numeric(frame["Age Group Rank"], errors="coerce")
+      automatic_divisions = set(frame.loc[
+        frame["finish_status"].eq("FIN") & age_group_rank.eq(1), "Division"
+      ])
+
+    exact = (
+      exact_historical_allocation(event_id, year, source)
+      if source["method"] == "legacy"
+      else None
+    )
+    if source["method"] == "legacy":
+      allocations, allocation_detail = (
+        exact
+        if exact is not None
+        else (allocate_historical_slots(starter_counts, source), None)
+      )
+      finishers = frame[
+        frame["finish_status"].eq("FIN")
+        & frame["finish_td"].notna()
+        & frame["finish_td"].gt(pd.Timedelta(0))
+      ]
+      for division, slots in allocations.items():
+        times = sorted(
+          value.total_seconds()
+          for value in finishers.loc[
+            finishers["Division"].eq(division), "finish_td"
+          ]
+        )
+        gender = "Male" if division.startswith("M") else "Female"
+        rows.append({
+          "year": year,
+          "gender": gender,
+          "division": division,
+          "method": (
+            "Published age-group allocation"
+            if allocation_detail is not None
+            else "Reconstructed age-group allocation"
+          ),
+          "slot_scope": "age group",
+          "slots": slots,
+          "starters": starter_counts.get(division, 0),
+          "finishers": len(times),
+          "cutoff": cutoff_at_rank(times, slots),
+          "times": times,
+          "ranks": {
+            str(offset): cutoff_at_rank(times, slots + offset)
+            for offset in LEGACY_RANK_OFFSETS
+          },
+          "source": {
+            **source,
+            "allocation_source_url": (
+              allocation_detail["source_url"]
+              if allocation_detail is not None
+              else None
+            ),
+            "allocation_cycle": (
+              allocation_detail["qualification_cycle"]
+              if allocation_detail is not None
+              else None
+            ),
+            "published_allocation_total": (
+              sum(allocations.values())
+              if allocation_detail is not None
+              else None
+            ),
+          },
+        })
+      continue
+
+    try:
+      if event["group"] == "703":
+        result = module.process_dataframe(
+          year,
+          pd.read_csv(csv_file),
+          male_slots=source["male"],
+          female_slots=source["female"],
+        )
+      else:
+        result = module.process_dataframe(
+          year, pd.read_csv(csv_file), total_slots=source["total"]
+        )
+    except (KeyError, ValueError):
+      unavailable_years.append(year)
+      continue
+    if not result:
+      unavailable_years.append(year)
+      continue
+    for target in module.build_target_rows([result]):
+      gender = target["Gender"]
+      division = target["Division"]
+      performance_slots = (
+        result["male_performance_slots"]
+        if event["group"] == "703" and gender == "Male"
+        else result["female_performance_slots"]
+        if event["group"] == "703"
+        else result["male_slots"]
+        if gender == "Male"
+        else result["female_slots"]
+      )
+      automatic_slots = result[
+        "male_auto" if gender == "Male" else "female_auto"
+      ]
+      finish_time = module.parse_time(target["Finish at or below"])
+      rows.append({
+        "year": year,
+        "gender": gender,
+        "division": division,
+        "method": (
+          "IRONMAN 70.3 Standard performance pool"
+          if event["group"] == "703"
+          else "Kona Standard performance pool"
+        ),
+        "slot_scope": "gender",
+        "slots": performance_slots + automatic_slots,
+        "performance_slots": performance_slots,
+        "automatic_slots": automatic_slots,
+        "automatic_slot": int(division in automatic_divisions),
+        "starters": starter_counts.get(division, 0),
+        "finishers": int(frame[
+          frame["finish_status"].eq("FIN")
+          & frame["Division"].eq(division)
+        ].shape[0]),
+        "standard_cutoff": duration_seconds(result[
+          (
+            "male_cutoff_td" if gender == "Male" else "female_cutoff_td"
+          )
+          if event["group"] == "703"
+          else ("male_cut_td" if gender == "Male" else "female_cut_td")
+        ]),
+        "cutoff": duration_seconds(finish_time),
+        "times": [],
+        "ranks": {},
+        "source": source,
+      })
+  return {
+    "targets": rows,
+    "rank_offsets": list(LEGACY_RANK_OFFSETS),
+    "unavailable_years": unavailable_years,
+  }
+
+
+def load_event_data(event):
+    columns = [
+        "Bib",
+        "Name",
+        "Country",
+        "Division",
+        "Overall Time",
+        *SPLIT_COLUMNS.values(),
+    ]
+    records = []
+
+    for year, csv_file in event["years"].items():
+        frame = pd.read_csv(csv_file)
+        missing = set(columns) - set(frame.columns)
+        if missing:
+            continue
+
+        gender_column = "Gender" if "Gender" in frame.columns else "gender"
+        if gender_column not in frame.columns:
+            continue
+        if "Finish" in frame.columns:
+            frame = frame.loc[frame["Finish"].eq("FIN")]
+        selected_columns = [*columns, gender_column]
+        frame = frame[selected_columns].copy()
+        duration_columns = ["Overall Time", *SPLIT_COLUMNS.values()]
+        for column in duration_columns:
+            frame[column] = frame[column].map(parse_duration)
+        frame = frame.dropna(subset=["Overall Time", *SPLIT_COLUMNS.values()])
+        # Some source rows are marked FIN but have corrupted/missing splits (e.g. 00:00:00);
+        # exclude those since a real finisher can't have zero swim/bike/run/overall time.
+        zero = pd.Timedelta(0)
+        frame = frame.loc[
+            (frame["Overall Time"] > zero)
+            & (frame[SPLIT_COLUMNS["Swim"]] > zero)
+            & (frame[SPLIT_COLUMNS["Bike"]] > zero)
+            & (frame[SPLIT_COLUMNS["Run"]] > zero)
+        ]
+
+        for row in frame.itertuples(index=False, name=None):
+            values = dict(zip(selected_columns, row))
+            records.append(
+                {
+                    "year": year,
+                    "bib": str(values["Bib"]),
+                    "name": str(values["Name"]),
+                    "country": str(values["Country"]),
+                    "gender": str(values[gender_column]),
+                    "division": str(values["Division"]),
+                    "overall": round(values["Overall Time"].total_seconds()),
+                    "swim": round(values["Swim Time"].total_seconds()),
+                    "t1": round(values["Transition 1 Time"].total_seconds()),
+                    "bike": round(values["Bike Time"].total_seconds()),
+                    "t2": round(values["Transition 2 Time"].total_seconds()),
+                    "run": round(values["Run Time"].total_seconds()),
+                }
+            )
+    return records
+
+
+def load_overall_data(event):
+    yearly_times = {}
+    pro_times = {}
+    for year, csv_file in event["years"].items():
+        frame = pd.read_csv(csv_file)
+        if "Overall Time" not in frame.columns:
+            continue
+        frame = finishers_only(frame)
+        if frame.empty:
+            continue
+
+        division = (
+            frame["Division"].astype(str).str.strip().str.upper()
+            if "Division" in frame.columns
+            else pd.Series("", index=frame.index)
+        )
+        gender_column = "Gender" if "Gender" in frame.columns else "gender"
+        gender = (
+            frame[gender_column].astype(str).str.strip().str.title()
+            if gender_column in frame.columns
+            else pd.Series("", index=frame.index)
+        )
+        pro_mask = division.isin(PRO_DIVISIONS)
+        age_group_mask = division.str.match(r"^[MF]\d{2}-\d{2}$", na=False)
+
+        age_group_durations = frame.loc[
+          age_group_mask, "Overall Time"
+        ].map(parse_duration).dropna()
+        age_group_durations = age_group_durations[age_group_durations > pd.Timedelta(0)]
+        if not age_group_durations.empty:
+            yearly_times[year] = sorted(
+                round(value.total_seconds()) for value in age_group_durations
+            )
+
+        pro_durations = frame.loc[pro_mask, "Overall Time"].map(parse_duration)
+        pro_durations = pro_durations[pro_durations > pd.Timedelta(0)]
+        pro_times[year] = {
+            "male": sorted(
+                round(value.total_seconds())
+                for value in pro_durations[gender.loc[pro_mask].eq("Male")].dropna()
+            ),
+            "female": sorted(
+                round(value.total_seconds())
+                for value in pro_durations[gender.loc[pro_mask].eq("Female")].dropna()
+            ),
+        }
+    return yearly_times, pro_times
+
+
+def load_race_statistics(event):
+    stats = []
+    for year, csv_file in event["years"].items():
+        frame = pd.read_csv(csv_file)
+        if "Finish" not in frame.columns:
+            continue
+
+        finish = frame["Finish"].astype(str).str.strip().str.upper()
+        gender_column = "Gender" if "Gender" in frame.columns else "gender"
+        gender = (
+            frame[gender_column].astype(str).str.strip().str.title()
+            if gender_column in frame.columns
+            else pd.Series("", index=frame.index)
+        )
+        division = (
+            frame["Division"].astype(str).str.strip().str.upper()
+            if "Division" in frame.columns
+            else pd.Series("", index=frame.index)
+        )
+
+        fin_mask = finish.eq("FIN")
+        registered = len(frame)
+        dns = int(finish.eq("DNS").sum())
+        dnf = int(finish.eq("DNF").sum())
+        dq = int(finish.eq("DQ").sum())
+        finishers = int(fin_mask.sum())
+        starters = registered - dns
+        pro_mask = division.isin(PRO_DIVISIONS)
+
+        durations = frame.loc[fin_mask, "Overall Time"].map(parse_duration).dropna() if "Overall Time" in frame.columns else pd.Series(dtype="timedelta64[ns]")
+        durations = durations[durations > pd.Timedelta(0)]
+
+        stats.append({
+            "year": year,
+            "registered": registered,
+            "starters": starters,
+            "finishers": finishers,
+            "dns": dns,
+            "dnf": dnf,
+            "dq": dq,
+            "male_finishers": int((fin_mask & gender.eq("Male")).sum()),
+            "female_finishers": int((fin_mask & gender.eq("Female")).sum()),
+            "pro_finishers": int((fin_mask & pro_mask).sum()),
+            "age_group_finishers": int((fin_mask & ~pro_mask).sum()),
+            "completion_rate": (finishers / starters) if starters else None,
+            "avg_finish": durations.mean().total_seconds() if not durations.empty else None,
+            "median_finish": durations.median().total_seconds() if not durations.empty else None,
+        })
+    return stats
+
+
+def duration_seconds(value):
+  return None if value is None else value.total_seconds()
+
+
+def load_qualification_pools(event_id, event):
+  module = QUALIFICATION_MODULES[event_id]
+  pools = {}
+  for year, csv_file in event["years"].items():
+    frame = pd.read_csv(csv_file).dropna(how="all")
+    frame = finishers_only(frame)
+    gender_column = "Gender" if "Gender" in frame.columns else "gender"
+    required = {gender_column, "Division", "Overall Time", "Age Group Rank"}
+    if frame.empty or not required.issubset(frame.columns):
+      continue
+
+    frame["gender_normalized"] = (
+      frame[gender_column].astype(str).str.strip().str.title()
+    )
+    frame["Division"] = frame["Division"].astype(str).str.strip()
+    frame["Division"] = frame["Division"].str.upper()
+    frame = frame[
+      frame["Division"].str.match(r"^[MF]\d{2}-\d{2}$", na=False)
+      & (
+        (frame["gender_normalized"].eq("Male") & frame["Division"].str.startswith("M"))
+        | (frame["gender_normalized"].eq("Female") & frame["Division"].str.startswith("F"))
+      )
+    ].copy()
+    frame["finish_td"] = frame["Overall Time"].map(module.parse_time)
+    frame = frame.dropna(subset=["finish_td"])
+    # Drop corrupted rows (e.g. 00:00:00) that would otherwise sort as the fastest time.
+    frame = frame[frame["finish_td"] > pd.Timedelta(0)]
+    frame["Age Group Rank"] = pd.to_numeric(
+      frame["Age Group Rank"], errors="coerce"
+    )
+    winner_indices = (
+      frame[frame["Age Group Rank"].eq(1)]
+      .sort_values("finish_td")
+      .drop_duplicates("Division")
+      .index
+    )
+    frame["ratio"] = frame.apply(
+      lambda row: module.get_ratio(
+        row["gender_normalized"], row["Division"]
+      ),
+      axis=1,
+    )
+    performance_frame = frame.dropna(subset=["ratio"]).copy()
+    performance_frame["age_graded"] = (
+      performance_frame["finish_td"] * performance_frame["ratio"]
+    )
+    non_winners = performance_frame.loc[
+      ~performance_frame.index.isin(winner_indices)
+    ]
+    pools[year] = {}
+    for gender in ("Male", "Female"):
+      pools[year].setdefault("automatic", {})[gender.lower()] = sorted(
+        frame.loc[
+          frame.index.isin(winner_indices)
+          & frame["gender_normalized"].eq(gender),
+          "Division",
+        ].str.upper().tolist()
+      )
+      gender_pool = non_winners[
+        non_winners["gender_normalized"].eq(gender)
+      ].sort_values("age_graded")
+      pools[year][gender.lower()] = [
+        {
+          "division": row.Division.upper(),
+          "age_graded": row.age_graded.total_seconds(),
+        }
+        for row in gender_pool.itertuples()
+      ]
+  return pools
+
+
+def load_qualification_data(event_id, event):
+    module = QUALIFICATION_MODULES[event_id]
+    is_half = event["group"] == "703"
+    results = []
+    for year, csv_file in event["years"].items():
+        frame = pd.read_csv(csv_file)
+        try:
+            if is_half:
+                slots = event["qualification_slots"]
+                result = module.process_dataframe(
+                    year, frame, male_slots=slots["male"], female_slots=slots["female"]
+                )
+            else:
+                result = module.process_dataframe(
+                    year, frame, total_slots=event["qualification_slots"]
+                )
+        except (KeyError, ValueError):
+            continue
+        if result:
+            results.append(result)
+
+    summaries = []
+    if is_half:
+        rank_offsets = (10, 20, 25)
+        for result in results:
+            summaries.append({
+                "year": str(result["year"]),
+                "male_finishers": result["male_finishers"],
+                "female_finishers": result["female_finishers"],
+                "male_starters": result["male_starters"],
+                "female_starters": result["female_starters"],
+                "male_auto": result["male_auto"],
+                "female_auto": result["female_auto"],
+                "male_perf": result["male_performance_slots"],
+                "female_perf": result["female_performance_slots"],
+                "male_cutoff": duration_seconds(result["male_cutoff_td"]),
+                "female_cutoff": duration_seconds(result["female_cutoff_td"]),
+                "ranks": {
+                    str(offset): {
+                        "male": duration_seconds(result[f"male_rank_{offset}_td"]),
+                        "female": duration_seconds(result[f"female_rank_{offset}_td"]),
+                    }
+                    for offset in rank_offsets
+                },
+            })
+    else:
+        rank_offsets = (15, 30)
+        for result in results:
+            summaries.append({
+                "year": str(result["year"]),
+                "male_finishers": result["male_finishers"],
+                "female_finishers": result["female_finishers"],
+                "male_starters": result["male_starters"],
+                "female_starters": result["female_starters"],
+                "male_auto": result["male_auto"],
+                "female_auto": result["female_auto"],
+                "male_perf": result["male_slots"],
+                "female_perf": result["female_slots"],
+                "male_cutoff": duration_seconds(result["male_cut_td"]),
+                "female_cutoff": duration_seconds(result["female_cut_td"]),
+                "ranks": {
+                    "15": {
+                        "male": duration_seconds(
+                            module.parse_time(result["male_cut_15"])
+                            if result["male_cut_15"] else None
+                        ),
+                        "female": None,
+                    },
+                    "30": {
+                        "male": duration_seconds(
+                            module.parse_time(result["male_cut_30"])
+                            if result["male_cut_30"] else None
+                        ),
+                        "female": None,
+                    },
+                },
+            })
+
+    target_rows = module.build_target_rows(results)
+    targets = []
+    for row in target_rows:
+        ratio = row.get("70.3 ratio", row.get("Kona ratio"))
+        targets.append({
+            "year": str(row["Year"]),
+            "gender": row["Gender"],
+            "division": row["Division"],
+            "ratio": ratio,
+            "age_graded_cutoff": row["Age-graded cutoff"],
+            "finish_target": row["Finish at or below"],
+        })
+    return {
+      "summaries": summaries,
+      "targets": targets,
+      "pools": load_qualification_pools(event_id, event),
+      "rank_offsets": list(rank_offsets),
+      "show_female_ranks": is_half,
+    }
+
+
+def load_dashboard_data():
+  rider = Rider()
+  bike_course_corrections = {}
+  for event_id, filename in GPX_EVENT_FILES.items():
+    path = GPX_TRACK_DIR / filename
+    if not path.exists():
+      continue
+    result = simulate(read_gpx(path), rider, 25.0, 100.0)
+    bike_course_corrections[event_id] = {
+      "source": filename,
+      "reference_time": result["t_observed_s"],
+      "flat_time": result["t_flat_s"],
+      "correction": result["t_observed_s"] - result["t_flat_s"],
+      "course_difficulty_factor": result["course_difficulty_factor"],
+    }
+  datasets = {}
+  for event_id, event in EVENTS.items():
+      datasets[event_id] = {
+          key: value
+          for key, value in event.items()
+          if key != "years"
+      }
+      datasets[event_id]["records"] = load_event_data(event)
+      datasets[event_id]["overall"], datasets[event_id]["pro_times"] = load_overall_data(event)
+      datasets[event_id]["statistics"] = load_race_statistics(event)
+      datasets[event_id]["qualification"] = load_qualification_data(
+          event_id, event
+      )
+      datasets[event_id]["historical_qualification"] = (
+        load_historical_qualification_data(event_id, event)
+      )
+      datasets[event_id]["bike_course_correction"] = (
+        bike_course_corrections.get(event_id)
+      )
+      summaries = datasets[event_id]["qualification"]["summaries"]
+      if summaries:
+          latest = summaries[-1]
+          datasets[event_id]["default_slots"] = {
+              "male": latest["male_perf"],
+              "female": latest["female_perf"],
+          }
+      else:
+          datasets[event_id]["default_slots"] = {"male": 20, "female": 20}
+  return datasets
+
+
+def build_html(datasets):
+    return f"""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>IRONMAN Split Explorer</title>
+  <style>
+    :root {{
+      --ink: #15231e; --muted: #65716c; --paper: #f1f3ef; --panel: #ffffff;
+      --line: #d5ddd8; --line-strong: #aebcb5; --accent: #00796b;
+      --accent-soft: #dcece7; --header: #183a31; --swim: #287da1;
+      --t1: #e9b949; --bike: #189b74; --t2: #ee8147; --run: #d94b4b;
+    }}
+    * {{ box-sizing: border-box; }}
+    html {{ background: var(--paper); }}
+    body {{ margin: 0; color: var(--ink); background: var(--paper); font-family: "Aptos", "Segoe UI", sans-serif; line-height: 1.4; }}
+    header {{ color: white; background-color: var(--header); background-image: linear-gradient(90deg, rgba(255,255,255,.035) 1px, transparent 1px), linear-gradient(rgba(255,255,255,.025) 1px, transparent 1px); background-size: 28px 28px; border-bottom: 4px solid #e4b84d; }}
+    .header-inner {{ width: min(100% - 64px, 1480px); margin: auto; padding: 30px 0 25px; }}
+    h1 {{ margin: 0; font-family: Georgia, "Times New Roman", serif; font-size: clamp(27px, 3vw, 42px); font-weight: 500; letter-spacing: 0; line-height: 1.12; }}
+    .subtitle {{ margin: 8px 0 0; color: #c9d9d3; font-size: 14px; }}
+    main {{ padding: 0 32px 48px; max-width: 1544px; margin: auto; }}
+    .controls {{ display: flex; flex-wrap: wrap; align-items: end; gap: 16px; padding: 16px; margin: 0 0 22px; background: var(--panel); border: 1px solid var(--line); border-radius: 4px; }}
+    label {{ display: grid; gap: 6px; color: var(--muted); font-size: 11px; font-weight: 700; text-transform: uppercase; }}
+    .duration-input, input[type=search], input[type=number], select {{ height: 39px; border: 1px solid var(--line-strong); border-radius: 3px; background: var(--panel); padding: 8px 10px; font: 14px "Aptos", "Segoe UI", sans-serif; color: var(--ink); transition: border-color .15s, box-shadow .15s; }}
+    .duration-input:focus, input[type=search]:focus, input[type=number]:focus, select:focus {{ border-color: var(--accent); box-shadow: 0 0 0 3px rgba(0,121,107,.12); outline: 0; }}
+    .duration-input {{ width: 112px; font-variant-numeric: tabular-nums; }}
+    .duration-input:invalid {{ border-color: var(--run); outline-color: var(--run); }}
+    input[type=search] {{ width: 230px; }}
+    input[type=checkbox] {{ width: 15px; height: 15px; accent-color: var(--accent); }}
+    .years {{ display: flex; flex-wrap: wrap; gap: 7px; padding: 0; }}
+    .years label {{ display: flex; flex-direction: row; align-items: center; gap: 5px; padding: 8px 9px; border: 1px solid var(--line); border-radius: 3px; background: #f8faf8; color: var(--ink); text-transform: none; font-size: 12px; font-weight: 600; }}
+    button {{ min-height: 39px; border: 0; border-radius: 3px; background: var(--accent); color: white; padding: 9px 15px; cursor: pointer; font: 700 12px "Aptos", "Segoe UI", sans-serif; transition: background .15s, transform .15s; }}
+    button:hover {{ background: #00665a; }}
+    button:active {{ transform: translateY(1px); }}
+    button:focus-visible {{ outline: 3px solid rgba(228,184,77,.55); outline-offset: 2px; }}
+    .event-control {{ display: flex; align-items: end; justify-content: space-between; padding: 14px 16px; margin-top: -1px; background: #e5ebe7; border: 1px solid var(--line); border-top: 0; }}
+    .event-control[hidden] {{ display: none; }}
+    .event-control label {{ width: min(100%, 360px); }}
+    .tabs {{ display: flex; gap: 4px; margin: 0 0 24px; padding: 8px 0 0; border-bottom: 1px solid var(--line-strong); overflow-x: auto; }}
+    .tab-button {{ flex: 0 0 auto; min-height: 43px; color: var(--muted); background: transparent; border: 1px solid transparent; border-bottom: 3px solid transparent; border-radius: 3px 3px 0 0; padding: 10px 18px; font-size: 13px; }}
+    .tab-button:hover {{ color: var(--ink); background: #e6ebe7; }}
+    .tab-button.active {{ color: var(--ink); background: var(--panel); border-color: var(--line); border-bottom-color: var(--accent); }}
+    .tab-panel {{ display: none; }}
+    .tab-panel.active {{ display: block; }}
+    .metrics {{ display: grid; grid-template-columns: repeat(3, minmax(140px, 1fr)); gap: 12px; margin-bottom: 28px; }}
+    .metric {{ position: relative; overflow: hidden; background: var(--panel); border: 1px solid var(--line); border-radius: 4px; padding: 15px 18px 16px; }}
+    .metric::before {{ content: ""; position: absolute; inset: 0 auto 0 0; width: 4px; background: var(--accent); }}
+    .metric:nth-child(2)::before {{ background: #e4b84d; }} .metric:nth-child(3)::before {{ background: #d66b47; }}
+    .metric span {{ display: block; color: var(--muted); font-size: 10px; font-weight: 800; text-transform: uppercase; }}
+    .metric strong {{ display: block; margin-top: 5px; font-family: Georgia, "Times New Roman", serif; font-size: 26px; font-weight: 500; font-variant-numeric: tabular-nums; }}
+    section {{ margin-top: 30px; }}
+    h2 {{ margin: 0 0 11px; font-family: Georgia, "Times New Roman", serif; font-size: 19px; font-weight: 500; line-height: 1.25; }}
+    .table-wrap {{ overflow: auto; border: 1px solid var(--line); border-radius: 4px; background: var(--panel); box-shadow: 0 1px 2px rgba(21,35,30,.04); max-height: 620px; scrollbar-color: var(--line-strong) transparent; }}
+    table {{ width: 100%; border-collapse: separate; border-spacing: 0; white-space: nowrap; font-size: 13px; font-variant-numeric: tabular-nums; }}
+    th {{ position: sticky; top: 0; z-index: 3; padding: 11px 12px; text-align: left; color: #33453e; background: #e5ece8; border-bottom: 1px solid var(--line-strong); font-size: 10px; font-weight: 800; text-transform: uppercase; }}
+    td {{ padding: 10px 12px; border-bottom: 1px solid #e6ebe7; }}
+    tbody tr:nth-child(even) td {{ background: #f8faf8; }}
+    tbody tr:hover td {{ background: #eaf3ef; }}
+    tbody tr:last-child td {{ border-bottom: 0; }}
+    th:first-child {{ left: 0; z-index: 4; }}
+    td:first-child {{ position: sticky; left: 0; z-index: 1; background: var(--panel); font-weight: 650; }}
+    tbody tr:nth-child(even) td:first-child {{ background: #f8faf8; }}
+    tbody tr:hover td:first-child {{ background: #eaf3ef; }}
+    .summary td:first-child {{ font-weight: 700; }}
+    .split-bar {{ display: flex; width: 230px; height: 11px; overflow: hidden; border-radius: 2px; background: #e8ece9; }}
+    .split-bar span {{ height: 100%; min-width: 0; }}
+    .swim {{ background: var(--swim); }} .t1 {{ background: var(--t1); }} .bike {{ background: var(--bike); }}
+    .t2 {{ background: var(--t2); }} .run {{ background: var(--run); }}
+    .legend {{ display: flex; flex-wrap: wrap; gap: 14px; color: var(--muted); font-size: 11px; font-weight: 650; margin: -2px 0 10px; }}
+    .legend i {{ display: inline-block; width: 9px; height: 9px; margin-right: 5px; border-radius: 1px; }}
+    .empty {{ padding: 36px; text-align: center; color: var(--muted); }}
+    .note {{ color: var(--muted); font-size: 12px; margin: 9px 0 0; }}
+    #qualificationPanel > .note {{ margin: 0 0 18px; padding: 11px 13px; color: #365048; background: var(--accent-soft); border-left: 3px solid var(--accent); }}
+    .chart-grid {{ display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; margin-top: 28px; }}
+    .chart-panel {{ position: relative; min-width: 0; padding: 16px; background: var(--panel); border: 1px solid var(--line); border-radius: 4px; box-shadow: 0 1px 2px rgba(21,35,30,.04); }}
+    .chart-panel.wide {{ grid-column: 1 / -1; }}
+    .chart-panel h2 {{ margin-bottom: 4px; }}
+    .chart-heading {{ display: flex; align-items: end; justify-content: space-between; gap: 18px; margin-bottom: 4px; }}
+    .chart-heading h2 {{ margin: 0; }}
+    .chart-controls {{ display: flex; flex: 0 0 auto; align-items: end; gap: 10px; }}
+    .chart-controls label {{ gap: 3px; }}
+    .chart-controls select {{ height: 34px; min-width: 108px; padding-block: 5px; }}
+    [hidden] {{ display: none !important; }}
+    svg.chart {{ display: block; width: 100%; min-height: 300px; background: var(--panel); }}
+    .chart text {{ font: 11px "Aptos", "Segoe UI", sans-serif; fill: var(--muted); }}
+    .chart .axis {{ stroke: #9ba5a2; stroke-width: 1; }}
+    .chart .grid {{ stroke: #e3e8e5; stroke-width: 1; }}
+    .chart .corner-label {{ font-size: 12px; font-weight: 800; text-transform: uppercase; }}
+    .chart .easy-label {{ fill: #00796b; }}
+    .chart .hard-label {{ fill: #b74545; }}
+    .chart .data-point {{ cursor: crosshair; stroke: var(--panel); stroke-width: 2; transition: r .12s, stroke-width .12s; }}
+    .chart .data-point:hover, .chart .data-point:focus {{ r: 6; stroke: var(--ink); stroke-width: 2; outline: none; }}
+    .chart .trace-toggle {{ cursor: pointer; }}
+    .chart .trace-toggle:focus {{ outline: none; }}
+    .chart .trace-toggle[aria-pressed="false"] {{ opacity: .35; }}
+    .chart-tooltip {{ position: absolute; z-index: 8; display: none; pointer-events: none; min-width: 125px; max-width: min(320px, calc(100% - 8px)); padding: 8px 10px; color: white; background: rgba(21,35,30,.96); border-radius: 3px; box-shadow: 0 4px 14px rgba(21,35,30,.2); font-size: 12px; line-height: 1.35; }}
+    .chart-tooltip strong {{ display: block; color: #f2cc66; font-size: 11px; }}
+    @media (max-width: 700px) {{
+      .header-inner {{ width: auto; padding: 22px 16px 20px; }}
+      main {{ padding: 0 16px 36px; }}
+      .event-control {{ margin-inline: -16px; padding-inline: 16px; }}
+      .event-control label {{ width: 100%; }}
+      .tabs {{ margin-inline: -16px; padding-left: 12px; padding-right: 12px; }}
+      .tab-button {{ padding-inline: 13px; }}
+      .controls {{ display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); padding: 13px; }}
+      .controls label, .controls > div, .controls input, .controls select {{ width: 100%; }}
+      .controls > label:nth-child(3), .controls > div, .controls > button {{ grid-column: 1 / -1; }}
+      .years {{ display: grid; grid-template-columns: repeat(3, 1fr); }}
+      .years label {{ justify-content: center; }}
+      .metrics {{ grid-template-columns: 1fr; gap: 8px; }}
+      .metric {{ padding-block: 12px; }}
+      section {{ margin-top: 25px; }}
+      h2 {{ font-size: 18px; }}
+      .chart-heading {{ align-items: stretch; flex-direction: column; }}
+      .chart-controls {{ width: 100%; }}
+      .chart-controls label {{ flex: 1 1 0; }}
+      .chart-controls select {{ width: 100%; min-width: 0; }}
+      svg.chart {{ min-height: 260px; }}
+    }}
+    @media (max-width: 900px) {{ .chart-grid {{ grid-template-columns: 1fr; }} .chart-panel.wide {{ grid-column: auto; }} }}
+  </style>
+</head>
+<body>
+  <header>
+    <div class="header-inner">
+      <h1 id="eventTitle">IRONMAN Split Explorer</h1>
+      <p id="eventSubtitle" class="subtitle"></p>
+    </div>
+  </header>
+  <main>
+    <div class="event-control">
+      <label>Event <select id="eventSelect"></select></label>
+    </div>
+    <nav class="tabs" aria-label="Dashboard views" role="tablist">
+      <button class="tab-button active" data-tab="splits" role="tab" aria-selected="true" aria-controls="splitsPanel">Split Explorer</button>
+      <button class="tab-button" data-tab="qualification" role="tab" aria-selected="false" aria-controls="qualificationPanel">Qualification</button>
+      <button class="tab-button" data-tab="overall" role="tab" aria-selected="false" aria-controls="overallPanel">Overall Times</button>
+      <button class="tab-button" data-tab="statistics" role="tab" aria-selected="false" aria-controls="statisticsPanel">Race Statistics</button>
+      <button class="tab-button" data-tab="compare" role="tab" aria-selected="false" aria-controls="comparePanel">Compare Races</button>
+      <button class="tab-button" data-tab="experimental" role="tab" aria-selected="false" aria-controls="experimentalPanel">Experimental</button>
+    </nav>
+
+    <div id="splitsPanel" class="tab-panel active">
+      <div class="controls">
+        <label>From (HH:MM:SS) <input id="fromTime" class="duration-input" type="text" inputmode="numeric" pattern="[0-9]+:[0-5][0-9]:[0-5][0-9]" value="04:25:00" aria-label="Minimum finishing time"></label>
+        <label>To (HH:MM:SS) <input id="toTime" class="duration-input" type="text" inputmode="numeric" pattern="[0-9]+:[0-5][0-9]:[0-5][0-9]" value="04:30:00" aria-label="Maximum finishing time"></label>
+        <label>Find athlete <input id="search" type="search" placeholder="Name, country, division"></label>
+        <div><label>Years</label><div id="years" class="years"></div></div>
+        <button id="download">Export filtered CSV ↓</button>
+      </div>
+
+      <div class="metrics">
+        <div class="metric"><span>Finishers</span><strong id="finisherCount">0</strong></div>
+        <div class="metric"><span>Selected range</span><strong id="rangeLabel">—</strong></div>
+        <div class="metric"><span>Median finish</span><strong id="medianFinish">—</strong></div>
+      </div>
+
+      <section>
+        <h2>Split-time summary</h2>
+        <div class="table-wrap" style="max-height:none">
+          <table class="summary"><thead><tr><th>Split</th><th>Average time (pace / speed) ± time σ</th><th>Minimum time (pace / speed)</th><th>Maximum time (pace / speed)</th></tr></thead><tbody id="summaryBody"></tbody></table>
+        </div>
+        <p id="distanceNote" class="note"></p>
+      </section>
+
+      <section>
+        <h2>Matching finishers</h2>
+        <div class="legend"><span><i class="swim"></i>Swim</span><span><i class="t1"></i>T1</span><span><i class="bike"></i>Bike</span><span><i class="t2"></i>T2</span><span><i class="run"></i>Run</span></div>
+        <div class="table-wrap">
+          <table><thead><tr><th>Year</th><th>Athlete</th><th>Division</th><th>Overall</th><th>Split profile</th><th>Swim</th><th>T1</th><th>Bike</th><th>T2</th><th>Run</th></tr></thead><tbody id="finishersBody"></tbody></table>
+        </div>
+      </section>
+    </div>
+
+    <div id="qualificationPanel" class="tab-panel">
+      <p id="qualificationNote" class="note"></p>
+      <div class="metrics">
+        <div class="metric"><span id="qualificationSlotsLabel">Official slot allocation</span><strong id="qualificationSlotsMetric">—</strong></div>
+        <div class="metric"><span id="qualificationSelectedTotalLabel">Selected total (auto + performance pool)</span><strong id="qualificationSelectedTotalMetric">—</strong></div>
+      </div>
+      <div class="controls">
+        <label>Qualification system <select class="qualification-system"><option value="current">Current performance pool</option><option value="historical">Actual historical rules + slots</option></select></label>
+        <label>Gender <select id="qualificationGender"><option value="Male">Men</option><option value="Female">Women</option></select></label>
+        <label>Displayed age group <select id="qualificationAgeGroup"></select></label>
+        <label>Performance-pool declines (X) <input id="qualificationDeclines" type="number" min="0" step="1" value="0"></label>
+        <label class="historical-rule-only">Age-group declines (Y) <input id="qualificationLegacyDeclines" type="number" min="0" step="1" value="0"></label>
+        <label class="current-rule-only">Male age-group winners (auto) <input id="maleAutoSlots" type="number" readonly tabindex="-1"></label>
+        <label class="current-rule-only">Female age-group winners (auto) <input id="femaleAutoSlots" type="number" readonly tabindex="-1"></label>
+        <label class="current-rule-only">Male performance-pool slots <input id="maleSlots" type="number" min="0" step="1"></label>
+        <label class="current-rule-only">Female performance-pool slots <input id="femaleSlots" type="number" min="0" step="1"></label>
+        <button id="resetSlots" class="current-rule-only" type="button">Reset defaults</button>
+      </div>
+      <section>
+        <h2 id="qualificationTableTitle">Qualification estimate by year</h2>
+        <div class="table-wrap" style="max-height:none">
+          <table><thead id="qualificationHead"></thead><tbody id="qualificationBody"></tbody></table>
+        </div>
+      </section>
+      <div class="chart-grid">
+        <div class="chart-panel wide"><h2 id="qualificationChartTitle">Qualification cutoff trends</h2><svg id="qualificationChart" class="chart" viewBox="0 0 1000 330"></svg></div>
+        <div class="chart-panel wide"><h2 id="ageGroupTargetChartTitle">Raw finish-time target by age group</h2><svg id="ageGroupTargetChart" class="chart" viewBox="0 0 1000 350"></svg></div>
+      </div>
+    </div>
+
+    <div id="overallPanel" class="tab-panel">
+      <section>
+        <h2>Overall finishing-time statistics</h2>
+        <p class="note">Age-group metrics exclude professional (MPRO/FPRO) athletes; pro columns show their fastest times separately.</p>
+        <div class="table-wrap" style="max-height:none">
+          <table><thead><tr><th>Year</th><th>Finishers</th><th>Mean</th><th>Median</th><th>Top 20% cutoff</th><th>Top 100 cutoff</th><th>Top 50 cutoff</th><th>Top 20 cutoff</th><th>Top 10 Pro (M)</th><th>Top 10 Pro (F)</th></tr></thead><tbody id="overallBody"></tbody></table>
+        </div>
+      </section>
+      <div class="chart-grid">
+        <div class="chart-panel wide">
+          <h2>Finishing-time density by year</h2>
+          <p class="note">Each row is a normalized density on the same time axis; the dot marks the median. Density height compares distribution shape, not finisher count.</p>
+          <svg id="densityChart" class="chart" viewBox="0 0 1000 500"></svg>
+        </div>
+        <div class="chart-panel"><h2>Mean and median</h2><svg id="averageChart" class="chart" viewBox="0 0 600 330"></svg></div>
+        <div class="chart-panel"><h2>Top finisher cutoffs</h2><svg id="cutoffChart" class="chart" viewBox="0 0 600 330"></svg></div>
+      </div>
+    </div>
+
+    <div id="statisticsPanel" class="tab-panel">
+      <section>
+        <h2>Race statistics by year</h2>
+        <p class="note">Starters exclude no-shows (DNS). Completion rate is finishers divided by starters.</p>
+        <div class="table-wrap" style="max-height:none">
+          <table><thead><tr><th>Year</th><th>Registered</th><th>Starters</th><th>Finishers</th><th>DNS</th><th>DNF</th><th>DQ</th><th>Completion</th><th>Male finishers</th><th>Female finishers</th><th>% Male</th><th>% Female</th><th>Pro finishers</th><th>Avg finish</th><th>Median finish</th></tr></thead><tbody id="statisticsBody"></tbody></table>
+        </div>
+      </section>
+      <div class="chart-grid">
+        <div class="chart-panel wide"><h2>Finishers, DNS and DNF by year</h2><svg id="statusChart" class="chart" viewBox="0 0 1000 330"></svg></div>
+        <div class="chart-panel"><h2>Male vs. female finishers</h2><svg id="genderChart" class="chart" viewBox="0 0 600 330"></svg></div>
+        <div class="chart-panel"><h2>Completion rate</h2><svg id="completionChart" class="chart" viewBox="0 0 600 330"></svg></div>
+      </div>
+    </div>
+
+    <div id="comparePanel" class="tab-panel">
+      <p class="note">Races are grouped by distance: full-distance IRONMAN (Kona-qualifying) events are compared with each other, and 70.3 events are compared separately.</p>
+      <div class="chart-grid">
+        <div class="chart-panel wide">
+          <h2>IRONMAN (140.6) finish-time distribution</h2>
+          <p class="note">Age-group finishers only (pros excluded); each point is one year's mean finish time for that race.</p>
+          <svg id="compareImDistribution" class="chart" viewBox="0 0 1000 360"></svg>
+        </div>
+        <div class="chart-panel wide">
+          <h2>70.3 finish-time distribution</h2>
+          <p class="note">Age-group finishers only (pros excluded); each point is one year's mean finish time for that race.</p>
+          <svg id="compare703Distribution" class="chart" viewBox="0 0 1000 360"></svg>
+        </div>
+      </div>
+      <div class="chart-grid">
+        <div class="chart-panel wide">
+          <div class="chart-heading">
+            <h2>IRONMAN World Championship — raw qualifying time by race</h2>
+            <div class="chart-controls">
+              <label>System <select class="qualification-system"><option value="current">Current</option><option value="historical">Historical</option></select></label>
+              <label>Age group <select id="compareImAgeGroup"></select></label>
+              <label>Gender <select id="compareImGender"><option value="Male">Men</option><option value="Female">Women</option></select></label>
+            </div>
+          </div>
+          <p class="note">Uses each race's official Kona slot allocation; each point is one season's raw finish-time target. All age-group winners accept, no roll-down.</p>
+          <svg id="compareImQualification" class="chart" viewBox="0 0 1000 360"></svg>
+        </div>
+        <div class="chart-panel wide">
+          <div class="chart-heading">
+            <h2>70.3 World Championship — raw qualifying time by race</h2>
+            <div class="chart-controls">
+              <label>System <select class="qualification-system"><option value="current">Current</option><option value="historical">Historical</option></select></label>
+              <label>Age group <select id="compare703AgeGroup"></select></label>
+              <label>Gender <select id="compare703Gender"><option value="Male">Men</option><option value="Female">Women</option></select></label>
+            </div>
+          </div>
+          <p class="note">Uses each race's official 70.3 Worlds slot allocation; each point is one season's raw finish-time target. All age-group winners accept, no roll-down.</p>
+          <svg id="compare703Qualification" class="chart" viewBox="0 0 1000 360"></svg>
+        </div>
+      </div>
+      <div class="chart-grid">
+        <div class="chart-panel wide">
+          <div class="chart-heading">
+            <h2>Mean finish time vs. raw qualifying time</h2>
+            <div class="chart-controls">
+              <label>System <select class="qualification-system"><option value="current">Current</option><option value="historical">Historical</option></select></label>
+              <label>Distance <select id="compareScatterDistance"><option value="im">IRONMAN 140.6</option><option value="703">IRONMAN 70.3</option></select></label>
+              <label>Age group <select id="compareScatterAgeGroup"></select></label>
+              <label>Gender <select id="compareScatterGender"><option value="Male">Men</option><option value="Female">Women</option></select></label>
+            </div>
+          </div>
+          <p class="note">Each point is one race-year using age-group finishers only. Click or focus a race name in the legend to hide or show its trace; the global fit and residual chart update to use visible races only. Colored lines are per-race fits. Kona, shortened IRONMAN France 2019, and Frankfurt 2026 are excluded.</p>
+          <svg id="compareMeanQualification" class="chart" viewBox="0 0 1000 430"></svg>
+        </div>
+        <div class="chart-panel wide">
+          <h2>Qualification-time difference from global fit</h2>
+          <p class="note">Uses the same selected race-years as the plot above. Positive means a later, easier cutoff than the global fit predicts; negative means an earlier, harder cutoff.</p>
+          <svg id="compareQualificationResidual" class="chart" viewBox="0 0 1000 390"></svg>
+        </div>
+      </div>
+      <div class="chart-grid">
+        <div class="chart-panel wide">
+          <h2>Slot pressure per 100 eligible starters</h2>
+          <p class="note">Uses the distance, system, age-group, and gender selected above. Performance-pool years use gender-wide slots and starters; legacy years use the selected age group's slots and starters. Higher values indicate more slot availability.</p>
+          <svg id="compareSlotPressure" class="chart" viewBox="0 0 1000 390"></svg>
+        </div>
+        <div class="chart-panel wide">
+          <h2>Qualifying cutoff percentile within the selected age group</h2>
+          <p class="note">Percentage of split-complete finishers in the selected gender and age group at or faster than the estimated cutoff. Lower values indicate a more selective cutoff.</p>
+          <svg id="compareCutoffPercentile" class="chart" viewBox="0 0 1000 390"></svg>
+        </div>
+        <div class="chart-panel wide">
+          <h2>Selected age-group depth</h2>
+          <p class="note">Number of split-complete finishers in the selected gender and age group for each race-year.</p>
+          <svg id="compareAgeGroupDepth" class="chart" viewBox="0 0 1000 390"></svg>
+        </div>
+        <div class="chart-panel wide">
+          <h2>Mean split contribution by race</h2>
+          <p class="note">Across all available years for the selected gender and age group. Segment shares are calculated from swim, transitions, bike, and run times and normalized to 100%.</p>
+          <svg id="compareSplitContribution" class="chart" viewBox="0 0 1000 430"></svg>
+        </div>
+        <div class="chart-panel wide">
+          <h2>Qualification cutoff uncertainty across years</h2>
+          <p class="note">Median raw cutoff with interquartile range and minimum/maximum whiskers for the selected system, gender, and age group. Wider ranges mean less stable historical qualification targets.</p>
+          <svg id="compareQualificationUncertainty" class="chart" viewBox="0 0 1000 430"></svg>
+        </div>
+      </div>
+    </div>
+
+    <div id="experimentalPanel" class="tab-panel">
+      <p class="note">Experimental course normalization using the GPX reference-rider model. For every race-year, corrected finish time = observed age-group finish time − (reference-rider course time − flat-course time). IRONMAN France is excluded because its GPX elevation data is invalid; races without a GPX track are omitted.</p>
+      <div class="chart-grid">
+        <div class="chart-panel wide">
+          <h2>Course-normalized IRONMAN (140.6) finish-time distribution</h2>
+          <p class="note">Age-group finishers only. Each point is one race-year mean after subtracting that race's GPX-derived course penalty.</p>
+          <svg id="experimentalImDistribution" class="chart" viewBox="0 0 1000 400"></svg>
+        </div>
+        <div class="chart-panel wide">
+          <div class="chart-heading">
+            <h2 id="experimentalPercentileTitle">Course-normalized top-20% finisher cutoff</h2>
+            <div class="chart-controls">
+              <label>Top finishers (%) <input id="experimentalPercentile" type="number" min="0.1" max="100" step="0.1" value="20"></label>
+            </div>
+          </div>
+          <p class="note">Age-group finishers only. Each point is the slowest corrected finish time still inside the fastest selected percentage for that race-year.</p>
+          <svg id="experimentalPercentileDistribution" class="chart" viewBox="0 0 1000 400"></svg>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <script src="dashboard_data.js"></script>
+  <script>
+    const DATASETS = window.DASHBOARD_DATA;
+    const splits = [
+      ["Swim", "swim"], ["T1", "t1"], ["Bike", "bike"], ["T2", "t2"], ["Run", "run"]
+    ];
+    const eventSelect = document.getElementById("eventSelect");
+    const fromInput = document.getElementById("fromTime");
+    const toInput = document.getElementById("toTime");
+    const searchInput = document.getElementById("search");
+    const yearsElement = document.getElementById("years");
+    const qualificationAgeGroup = document.getElementById("qualificationAgeGroup");
+    const qualificationGender = document.getElementById("qualificationGender");
+    const qualificationDeclines = document.getElementById("qualificationDeclines");
+    const qualificationLegacyDeclines = document.getElementById("qualificationLegacyDeclines");
+    const experimentalPercentile = document.getElementById("experimentalPercentile");
+    const maleAutoSlots = document.getElementById("maleAutoSlots");
+    const femaleAutoSlots = document.getElementById("femaleAutoSlots");
+    const maleSlots = document.getElementById("maleSlots");
+    const femaleSlots = document.getElementById("femaleSlots");
+    const slotAllocations = {{}};
+    const hiddenMeanQualificationRaces = new Set();
+    const selectedAgeGroupRecordCache = new Map();
+    let activeTab = "splits";
+    let qualificationSystem = "current";
+    function dataset() {{ return DATASETS[eventSelect.value]; }}
+
+    function parseTime(value) {{
+      if (!/^\\d+:[0-5]\\d:[0-5]\\d$/.test(value.trim())) return NaN;
+      const parts = value.split(":").map(Number);
+      return parts[0] * 3600 + parts[1] * 60 + parts[2];
+    }}
+    function duration(seconds) {{
+      if (!Number.isFinite(seconds)) return "—";
+      const rounded = Math.round(seconds);
+      const hours = Math.floor(rounded / 3600);
+      const minutes = Math.floor((rounded % 3600) / 60);
+      const secs = rounded % 60;
+      return `${{String(hours).padStart(2, "0")}}:${{String(minutes).padStart(2, "0")}}:${{String(secs).padStart(2, "0")}}`;
+    }}
+    function qualificationDuration(seconds) {{
+      return Number.isFinite(seconds) ? duration(Math.floor(seconds)) : "—";
+    }}
+    function pace(seconds) {{
+      const rounded = Math.round(seconds);
+      return `${{Math.floor(rounded / 60)}}:${{String(rounded % 60).padStart(2, "0")}}`;
+    }}
+    function metric(split, seconds) {{
+      const distances = dataset().distances;
+      if (split === "swim") return `${{pace(seconds / (distances.swim / 100))}}/100 m`;
+      if (split === "bike") return `${{(distances.bike / (seconds / 3600)).toFixed(1)}} km/h`;
+      if (split === "run") return `${{pace(seconds / distances.run)}}/km`;
+      return "";
+    }}
+    function withMetric(split, seconds) {{
+      const value = metric(split, seconds);
+      return value ? `${{duration(seconds)}} (${{value}})` : duration(seconds);
+    }}
+    function selectedYears() {{
+      return new Set([...yearsElement.querySelectorAll("input:checked")].map(input => input.value));
+    }}
+    function filteredData() {{
+      const lower = parseTime(fromInput.value);
+      const upper = parseTime(toInput.value);
+      const query = searchInput.value.trim().toLowerCase();
+      const activeYears = selectedYears();
+      return dataset().records.filter(row => row.overall >= lower && row.overall <= upper && activeYears.has(row.year))
+        .filter(row => !query || `${{row.name}} ${{row.country}} ${{row.division}} ${{row.bib}}`.toLowerCase().includes(query))
+        .sort((a, b) => a.overall - b.overall || a.name.localeCompare(b.name));
+    }}
+    function summaryRows(rows) {{
+      if (!rows.length) return `<tr><td colspan="4" class="empty">No finishers in this range.</td></tr>`;
+      return splits.map(([label, key]) => {{
+        const values = rows.map(row => row[key]).filter(value => value > 0);
+        if (!values.length) return `<tr><td>${{label}}</td><td colspan="3">No recorded values</td></tr>`;
+        const average = values.reduce((sum, value) => sum + value, 0) / values.length;
+        const sigma = Math.sqrt(values.reduce((sum, value) => sum + (value - average) ** 2, 0) / values.length);
+        const averageMetric = metric(key, average);
+        const averageText = averageMetric ? `${{duration(average)}} (${{averageMetric}})` : duration(average);
+        return `<tr><td>${{label}}</td><td>${{averageText}} ± ${{duration(sigma)}}</td><td>${{withMetric(key, Math.min(...values))}}</td><td>${{withMetric(key, Math.max(...values))}}</td></tr>`;
+      }}).join("");
+    }}
+    function finisherRows(rows) {{
+      if (!rows.length) return `<tr><td colspan="10" class="empty">Adjust the range or year filters to find finishers.</td></tr>`;
+      return rows.map(row => {{
+        const bars = splits.map(([, key]) => `<span class="${{key}}" style="width:${{100 * row[key] / row.overall}}%"></span>`).join("");
+        return `<tr><td>${{row.year}}</td><td><strong>${{row.name}}</strong><br><small>${{row.country}} · #${{row.bib}}</small></td><td>${{row.division}}</td><td>${{duration(row.overall)}}</td><td><div class="split-bar">${{bars}}</div></td><td>${{withMetric("swim", row.swim)}}</td><td>${{duration(row.t1)}}</td><td>${{withMetric("bike", row.bike)}}</td><td>${{duration(row.t2)}}</td><td>${{withMetric("run", row.run)}}</td></tr>`;
+      }}).join("");
+    }}
+    function median(values) {{
+      const middle = Math.floor(values.length / 2);
+      return values.length % 2 ? values[middle] : (values[middle - 1] + values[middle]) / 2;
+    }}
+    function attachPointTooltips(svg) {{
+      const panel = svg.closest(".chart-panel");
+      let tooltip = panel.querySelector(".chart-tooltip");
+      if (!tooltip) {{
+        tooltip = document.createElement("div");
+        tooltip.className = "chart-tooltip";
+        tooltip.setAttribute("role", "tooltip");
+        panel.appendChild(tooltip);
+      }}
+      const show = (point, clientX, clientY) => {{
+        tooltip.innerHTML = `<strong>${{point.dataset.series}}</strong>${{point.dataset.year}} · ${{point.dataset.value}}`;
+        const panelBox = panel.getBoundingClientRect();
+        tooltip.style.display = "block";
+        const gap = 12;
+        const padding = 4;
+        let left = clientX - panelBox.left - tooltip.offsetWidth / 2;
+        let top = clientY - panelBox.top - tooltip.offsetHeight - gap;
+        left = Math.max(padding, Math.min(left, panelBox.width - tooltip.offsetWidth - padding));
+        if (top < padding) top = clientY - panelBox.top + gap;
+        tooltip.style.left = `${{left}}px`;
+        tooltip.style.top = `${{top}}px`;
+      }};
+      svg.querySelectorAll(".data-point").forEach(point => {{
+        point.addEventListener("pointerenter", event => show(point, event.clientX, event.clientY));
+        point.addEventListener("pointermove", event => show(point, event.clientX, event.clientY));
+        point.addEventListener("pointerleave", () => tooltip.style.display = "none");
+        point.addEventListener("focus", () => {{
+          const box = point.getBoundingClientRect();
+          show(point, box.left + box.width / 2, box.top);
+        }});
+        point.addEventListener("blur", () => tooltip.style.display = "none");
+      }});
+    }}
+    function lineChart(elementId, labels, series, formatValue = null, options = {{}}) {{
+      const svg = document.getElementById(elementId);
+      const width = svg.viewBox.baseVal.width;
+      const height = svg.viewBox.baseVal.height;
+      const legendColumnWidth = 285;
+      const legendColumns = Math.max(1, Math.floor((width - 92) / legendColumnWidth));
+      const legendRows = Math.ceil(series.length / legendColumns);
+      const margin = {{ left: 68, right: 24, top: 16 + legendRows * 22, bottom: 48 }};
+      const values = series.flatMap(item => item.values.filter(Number.isFinite));
+      if (!values.length) {{ svg.innerHTML = `<text x="20" y="40">No data available</text>`; return; }}
+      const format = formatValue || (elementId === "qualificationChart" ? qualificationDuration : duration);
+      const tickFormat = formatValue ? (value => format(value)) : (value => format(value).slice(0, 5));
+      let minimum = Math.min(...values), maximum = Math.max(...values);
+      if (options.zeroBaseline) {{
+        minimum = 0;
+        maximum += Math.max(maximum * 0.08, formatValue ? 1 : 60);
+      }} else {{
+        const padding = Math.max((maximum - minimum) * 0.12, formatValue ? 1 : 60);
+        minimum -= padding; maximum += padding;
+      }}
+      const x = index => margin.left + index * (width - margin.left - margin.right) / Math.max(labels.length - 1, 1);
+      const y = value => margin.top + (maximum - value) * (height - margin.top - margin.bottom) / (maximum - minimum);
+      let markup = "";
+      for (let tick = 0; tick <= 4; tick++) {{
+        const value = minimum + (maximum - minimum) * tick / 4;
+        const yPosition = y(value);
+        markup += `<line class="grid" x1="${{margin.left}}" y1="${{yPosition}}" x2="${{width - margin.right}}" y2="${{yPosition}}"/><text x="${{margin.left - 8}}" y="${{yPosition + 4}}" text-anchor="end">${{tickFormat(value)}}</text>`;
+      }}
+      labels.forEach((label, index) => markup += `<text x="${{x(index)}}" y="${{height - 18}}" text-anchor="middle">${{label}}</text>`);
+      markup += `<line class="axis" x1="${{margin.left}}" y1="${{margin.top}}" x2="${{margin.left}}" y2="${{height - margin.bottom}}"/><line class="axis" x1="${{margin.left}}" y1="${{height - margin.bottom}}" x2="${{width - margin.right}}" y2="${{height - margin.bottom}}"/>`;
+      series.forEach((item, seriesIndex) => {{
+        const points = item.values.map((value, index) => Number.isFinite(value) ? `${{x(index)}},${{y(value)}}` : null).filter(Boolean).join(" ");
+        markup += `<polyline points="${{points}}" fill="none" stroke="${{item.color}}" stroke-width="2.2"/>`;
+        item.values.forEach((value, index) => {{
+          if (Number.isFinite(value)) {{
+            const valueText = format(value);
+            const accessibleLabel = `${{item.label}}, ${{labels[index]}}, ${{valueText}}`;
+            markup += `<circle class="data-point" cx="${{x(index)}}" cy="${{y(value)}}" r="4" fill="${{item.color}}" tabindex="0" role="img" aria-label="${{accessibleLabel}}" data-series="${{item.label}}" data-year="${{labels[index]}}" data-value="${{valueText}}"><title>${{accessibleLabel}}</title></circle>`;
+          }}
+        }});
+        const legendColumn = seriesIndex % legendColumns;
+        const legendRow = Math.floor(seriesIndex / legendColumns);
+        const legendX = margin.left + legendColumn * legendColumnWidth;
+        const legendY = 15 + legendRow * 22;
+        markup += `<line x1="${{legendX}}" y1="${{legendY}}" x2="${{legendX + 18}}" y2="${{legendY}}" stroke="${{item.color}}" stroke-width="3"/><text x="${{legendX + 23}}" y="${{legendY + 4}}">${{item.label}}</text>`;
+      }});
+      svg.innerHTML = markup;
+      attachPointTooltips(svg);
+    }}
+    function densityChart(yearlyTimes) {{
+      const svg = document.getElementById("densityChart");
+      const width = 1000;
+      const entries = Object.entries(yearlyTimes).filter(([, values]) => values.length);
+      const allValues = entries.flatMap(([, values]) => values).sort((left, right) => left - right);
+      if (!allValues.length) {{ svg.innerHTML = `<text x="20" y="40">No data available</text>`; return; }}
+
+      const percentile = (values, fraction) => values[Math.min(values.length - 1, Math.floor((values.length - 1) * fraction))];
+      const minimum = percentile(allValues, 0.01);
+      const maximum = percentile(allValues, 0.99);
+      const range = Math.max(maximum - minimum, 1);
+      const bandwidth = Math.max(300, Math.min(1200, range / 30));
+      const sampleCount = 180;
+      const rowHeight = 58;
+      const margin = {{ left: 88, right: 26, top: 18, bottom: 52 }};
+      const height = margin.top + entries.length * rowHeight + margin.bottom;
+      const plotBottom = height - margin.bottom;
+      const x = value => margin.left + (value - minimum) * (width - margin.left - margin.right) / range;
+      const colors = ["#006d77", "#e76f51", "#277da1", "#7a6f3d", "#8f5d8c", "#2a9d8f", "#bc4749"];
+      svg.setAttribute("viewBox", `0 0 ${{width}} ${{height}}`);
+
+      let markup = "";
+      for (let tick = 0; tick <= 6; tick++) {{
+        const value = minimum + range * tick / 6;
+        const xPosition = x(value);
+        markup += `<line class="grid" x1="${{xPosition}}" y1="${{margin.top}}" x2="${{xPosition}}" y2="${{plotBottom}}"/><text x="${{xPosition}}" y="${{height - 20}}" text-anchor="middle">${{duration(value).slice(0, 5)}}</text>`;
+      }}
+
+      entries.forEach(([year, values], seriesIndex) => {{
+        const color = colors[seriesIndex % colors.length];
+        const baseline = margin.top + (seriesIndex + 1) * rowHeight - 10;
+        const density = Array.from({{ length: sampleCount }}, (_, index) => {{
+          const value = minimum + range * index / (sampleCount - 1);
+          const total = values.reduce((sum, observation) => {{
+            const distance = (value - observation) / bandwidth;
+            return sum + Math.exp(-0.5 * distance * distance);
+          }}, 0);
+          return {{ value, density: total / values.length }};
+        }});
+        const peak = Math.max(...density.map(point => point.density));
+        const ridgeHeight = rowHeight - 18;
+        const points = density.map(point => `${{x(point.value)}},${{baseline - ridgeHeight * point.density / peak}}`).join(" L ");
+        const medianValue = median(values);
+        const medianX = x(medianValue);
+        const medianText = duration(medianValue).slice(0, 5);
+        const accessibleLabel = `${{year}} median, ${{medianText}}`;
+        markup += `<line class="grid" x1="${{margin.left}}" y1="${{baseline}}" x2="${{width - margin.right}}" y2="${{baseline}}"/>`;
+        markup += `<path d="M ${{x(minimum)}},${{baseline}} L ${{points}} L ${{x(maximum)}},${{baseline}} Z" fill="${{color}}" fill-opacity="0.22" stroke="${{color}}" stroke-width="2"/>`;
+        markup += `<text x="${{margin.left - 12}}" y="${{baseline - 12}}" text-anchor="end" font-weight="700">${{year}}</text><text x="${{margin.left - 12}}" y="${{baseline + 4}}" text-anchor="end">n=${{values.length.toLocaleString()}}</text>`;
+        markup += `<line x1="${{medianX}}" y1="${{baseline - ridgeHeight}}" x2="${{medianX}}" y2="${{baseline}}" stroke="${{color}}" stroke-dasharray="3 3"/><circle class="data-point" cx="${{medianX}}" cy="${{baseline}}" r="4.5" fill="${{color}}" tabindex="0" role="img" aria-label="${{accessibleLabel}}" data-series="Median finish" data-year="${{year}}" data-value="${{medianText}}"><title>${{accessibleLabel}}</title></circle>`;
+      }});
+      markup += `<line class="axis" x1="${{margin.left}}" y1="${{plotBottom}}" x2="${{width - margin.right}}" y2="${{plotBottom}}"/><text x="${{(margin.left + width - margin.right) / 2}}" y="${{height - 3}}" text-anchor="middle">Finish time (HH:MM)</text>`;
+      svg.innerHTML = markup;
+      attachPointTooltips(svg);
+    }}
+    function qualificationAgeGroups() {{
+      const targets = qualificationSystem === "historical"
+        ? dataset().historical_qualification.targets
+        : dataset().qualification.targets;
+      const male = new Set(targets.filter(row => row.gender === "Male").map(row => row.division.slice(1)));
+      const female = new Set(targets.filter(row => row.gender === "Female").map(row => row.division.slice(1)));
+      return [...male].filter(ageGroup => female.has(ageGroup)).sort((left, right) => Number(left.split("-")[0]) - Number(right.split("-")[0]));
+    }}
+    function qualificationRatio(gender) {{
+      const prefix = gender === "Male" ? "M" : "F";
+      const division = `${{prefix}}${{qualificationAgeGroup.value}}`;
+      return dataset().qualification.targets.find(row => row.gender === gender && row.division === division)?.ratio;
+    }}
+    function qualificationTime(seconds, gender) {{
+      const ratio = qualificationRatio(gender);
+      return Number.isFinite(seconds) && Number.isFinite(ratio) ? seconds / ratio : null;
+    }}
+    function hasSlotOverride() {{
+      return Object.prototype.hasOwnProperty.call(slotAllocations, eventSelect.value);
+    }}
+    function displayAllocation() {{
+      return slotAllocations[eventSelect.value]
+        || dataset()?.default_slots
+        || {{ male: 0, female: 0 }};
+    }}
+    function poolEntry(year, gender, performanceSlots, rejections = 0) {{
+      const pool = dataset().qualification.pools[year]?.[gender.toLowerCase()] || [];
+      const index = performanceSlots + rejections - 1;
+      return index >= 0 && index < pool.length ? pool[index] : null;
+    }}
+    function poolCutoff(year, gender, performanceSlots, rejections = 0) {{
+      const entry = poolEntry(year, gender, performanceSlots, rejections);
+      return typeof entry === "number" ? entry : entry?.age_graded ?? null;
+    }}
+    function dynamicQualificationSummaries() {{
+      const rawSummaries = dataset().qualification.summaries;
+      if (!hasSlotOverride()) {{
+        // No manual override: show the exact historical per-year values (matches Compare Races).
+        return rawSummaries;
+      }}
+      const allocations = slotAllocations[eventSelect.value];
+      const offsets = dataset().qualification.rank_offsets;
+      return rawSummaries.map(row => {{
+        const malePerformance = Math.max(0, allocations.male);
+        const femalePerformance = Math.max(0, allocations.female);
+        return {{
+          ...row,
+          male_perf: malePerformance,
+          female_perf: femalePerformance,
+          male_cutoff: poolCutoff(row.year, "male", malePerformance),
+          female_cutoff: poolCutoff(row.year, "female", femalePerformance),
+          ranks: Object.fromEntries(offsets.map(offset => [String(offset), {{
+            male: poolCutoff(row.year, "male", malePerformance, offset),
+            female: poolCutoff(row.year, "female", femalePerformance, offset),
+          }}])),
+        }};
+      }});
+    }}
+    function syncSlotControls() {{
+      const summaries = dataset().qualification.summaries;
+      const allocation = displayAllocation();
+      const latest = summaries[summaries.length - 1] || {{ male_auto: 0, female_auto: 0 }};
+      maleSlots.min = 0;
+      femaleSlots.min = 0;
+      maleSlots.value = allocation.male;
+      femaleSlots.value = allocation.female;
+      maleAutoSlots.value = latest.male_auto;
+      femaleAutoSlots.value = latest.female_auto;
+      const officialSlots = dataset().qualification_slots;
+      const officialTotal = typeof officialSlots === "object" ? officialSlots.male + officialSlots.female : officialSlots;
+      const selectedTotal = Number(latest.male_auto) + Number(latest.female_auto) + Number(allocation.male) + Number(allocation.female);
+      const mode = hasSlotOverride() ? "what-if override" : `historical, ${{latest.year}}`;
+      document.getElementById("qualificationSelectedTotalMetric").textContent = `${{selectedTotal}} (official: ${{officialTotal}}; ${{mode}})`;
+    }}
+    function updateSlotAllocation() {{
+      const previous = displayAllocation();
+      slotAllocations[eventSelect.value] = {{
+        male: Math.max(0, Math.round(Number.isFinite(Number(maleSlots.value)) ? Number(maleSlots.value) : previous.male)),
+        female: Math.max(0, Math.round(Number.isFinite(Number(femaleSlots.value)) ? Number(femaleSlots.value) : previous.female)),
+      }};
+      syncSlotControls();
+      renderQualification();
+    }}
+    function currentAgeGroupSlots(year, gender, ageGroup, performanceSlots) {{
+      const yearPool = dataset().qualification.pools[year];
+      if (!yearPool) return null;
+      const genderKey = gender.toLowerCase();
+      const prefix = gender === "Male" ? "M" : "F";
+      const division = `${{prefix}}${{ageGroup}}`;
+      const automaticSlot = yearPool.automatic?.[genderKey]?.includes(division) ? 1 : 0;
+      const poolSlots = (yearPool[genderKey] || [])
+        .slice(0, performanceSlots)
+        .filter(entry => entry.division === division)
+        .length;
+      return automaticSlot + poolSlots;
+    }}
+    function renderCurrentAgeGroupTargets(summaries, gender) {{
+      const targets = dataset().qualification.targets;
+      const ageGroups = qualificationAgeGroups();
+      const years = summaries.map(row => row.year);
+      const colors = ["#006d77", "#e76f51", "#277da1", "#7a6f3d", "#8f5d8c", "#2a9d8f", "#bc4749"];
+      const prefix = gender === "Male" ? "M" : "F";
+      const series = years.map((year, index) => ({{
+        label: year,
+        color: colors[index % colors.length],
+        values: ageGroups.map(ageGroup => {{
+          const target = targets.find(row => row.year === year && row.gender === gender && row.division === `${{prefix}}${{ageGroup}}`);
+          const summary = summaries.find(row => row.year === year);
+          const cutoff = gender === "Male" ? summary?.male_cutoff : summary?.female_cutoff;
+          return target && Number.isFinite(cutoff) ? cutoff / target.ratio : null;
+        }}),
+      }}));
+      document.getElementById("ageGroupTargetChartTitle").textContent = `${{gender === "Male" ? "Male" : "Female"}} raw finish-time target by age group`;
+      lineChart("ageGroupTargetChart", ageGroups, series);
+    }}
+    function renderCurrentQualification() {{
+      const qualification = dataset().qualification;
+      const slots = dataset().qualification_slots;
+      document.querySelectorAll(".current-rule-only").forEach(element => element.hidden = false);
+      document.querySelectorAll(".historical-rule-only").forEach(element => element.hidden = true);
+      document.getElementById("qualificationSlotsLabel").textContent = "Official current allocation";
+      document.getElementById("qualificationSelectedTotalLabel").textContent = "Selected total (auto + performance pool)";
+      document.getElementById("qualificationSlotsMetric").textContent = typeof slots === "object"
+        ? `${{slots.male}} M / ${{slots.female}} F`
+        : `${{slots}} total`;
+      syncSlotControls();
+      const summaries = dynamicQualificationSummaries();
+      const ageGroups = qualificationAgeGroups();
+      const previousAgeGroup = qualificationAgeGroup.value;
+      qualificationAgeGroup.innerHTML = ageGroups.map(ageGroup => `<option value="${{ageGroup}}">${{ageGroup}}</option>`).join("");
+      qualificationAgeGroup.value = ageGroups.includes(previousAgeGroup) ? previousAgeGroup : (ageGroups.includes("30-34") ? "30-34" : ageGroups[0]);
+      const ageGroup = qualificationAgeGroup.value;
+      const gender = qualificationGender.value;
+      const genderKey = gender.toLowerCase();
+      const prefix = gender === "Male" ? "M" : "F";
+      const ratio = qualificationRatio(gender);
+      const declines = Math.max(0, Math.round(Number(qualificationDeclines.value) || 0));
+      const standardName = dataset().group === "703" ? "70.3 Standard" : "Kona Standard";
+      document.getElementById("qualificationHead").innerHTML = `<tr><th>Year</th><th>${{prefix}} finishers</th><th>M / F total slots</th><th>M / F ${{ageGroup}} slots</th><th>${{prefix}} auto</th><th>${{prefix}} performance pool</th><th>${{standardName}} cutoff</th><th>${{prefix}}${{ageGroup}} equivalent</th><th>${{prefix}}${{ageGroup}} +${{declines}} declines</th></tr>`;
+      document.getElementById("qualificationBody").innerHTML = summaries.map(row => {{
+        const performanceSlots = row[`${{genderKey}}_perf`];
+        const standard = poolCutoff(row.year, gender, performanceSlots);
+        const rolledStandard = poolCutoff(row.year, gender, performanceSlots, declines);
+        const totalSlots = `${{row.male_auto + row.male_perf}} / ${{row.female_auto + row.female_perf}}`;
+        const ageGroupSlots = `${{currentAgeGroupSlots(row.year, "Male", ageGroup, row.male_perf) ?? "—"}} / ${{currentAgeGroupSlots(row.year, "Female", ageGroup, row.female_perf) ?? "—"}}`;
+        return `<tr><td>${{row.year}}</td><td>${{row[`${{genderKey}}_finishers`]}}</td><td>${{totalSlots}}</td><td>${{ageGroupSlots}}</td><td>${{row[`${{genderKey}}_auto`]}}</td><td>${{performanceSlots}}</td><td>${{qualificationDuration(standard)}}</td><td>${{qualificationDuration(qualificationTime(standard, gender))}}</td><td>${{qualificationDuration(qualificationTime(rolledStandard, gender))}}</td></tr>`;
+      }}).join("");
+      document.getElementById("qualificationNote").textContent = hasSlotOverride()
+        ? `${{dataset().qualification_note}} M / F age-group slots are projected qualifiers with no declines. The ${{standardName}} cutoff is age-graded; equivalent and +${{declines}} columns are raw ${{prefix}}${{ageGroup}} finish times (ratio ${{Number(ratio).toFixed(4)}}). What-if override: selected male and female performance-pool slots apply to every year.`
+        : `${{dataset().qualification_note}} M / F age-group slots are projected qualifiers with no declines. The ${{standardName}} cutoff is age-graded; equivalent and +${{declines}} columns are raw ${{prefix}}${{ageGroup}} finish times (ratio ${{Number(ratio).toFixed(4)}}). Current rules and the current race allocation are applied to every historical field.`;
+      document.getElementById("qualificationTableTitle").textContent = `Qualification estimate by year · ${{prefix}}${{ageGroup}}`;
+      document.getElementById("qualificationChartTitle").textContent = `Qualification cutoff trends · ${{prefix}}${{ageGroup}}`;
+      const years = summaries.map(row => row.year);
+      const series = [
+        {{ label: `${{prefix}}${{ageGroup}} cutoff`, color: "#277da1", values: summaries.map(row => qualificationTime(poolCutoff(row.year, gender, row[`${{genderKey}}_perf`]), gender)) }},
+        {{ label: `${{prefix}}${{ageGroup}} +${{declines}} declines`, color: "#e76f51", values: summaries.map(row => qualificationTime(poolCutoff(row.year, gender, row[`${{genderKey}}_perf`], declines), gender)) }},
+      ];
+      lineChart("qualificationChart", years, series);
+      renderCurrentAgeGroupTargets(summaries, gender);
+    }}
+    function historicalTarget(year, gender, ageGroup) {{
+      const prefix = gender === "Male" ? "M" : "F";
+      return dataset().historical_qualification.targets.find(row =>
+        row.year === year && row.gender === gender && row.division === `${{prefix}}${{ageGroup}}`
+      );
+    }}
+    function historicalGenderSlots(year, gender) {{
+      const rows = dataset().historical_qualification.targets.filter(row =>
+        row.year === year && row.gender === gender
+      );
+      if (!rows.length) return null;
+      return rows[0].slot_scope === "gender"
+        ? rows[0].slots
+        : rows.reduce((sum, row) => sum + row.slots, 0);
+    }}
+    function historicalAgeGroupSlots(year, gender, ageGroup) {{
+      const target = historicalTarget(year, gender, ageGroup);
+      if (!target) return null;
+      if (target.slot_scope === "age group") return target.slots;
+      const prefix = gender === "Male" ? "M" : "F";
+      const division = `${{prefix}}${{ageGroup}}`;
+      const pool = dataset().qualification.pools[year]?.[gender.toLowerCase()] || [];
+      const automaticSlot = target.automatic_slot ?? 0;
+      const performanceSlots = pool
+        .slice(0, target.performance_slots)
+        .filter(entry => entry.division === division)
+        .length;
+      return automaticSlot + performanceSlots;
+    }}
+    function historicalCutoffs(year, gender, ageGroup, poolDeclines, ageGroupDeclines) {{
+      const target = historicalTarget(year, gender, ageGroup);
+      if (!target) return {{
+        standard: null,
+        performanceEquivalent: null,
+        performanceRolled: null,
+        legacyCutoff: null,
+        legacyRolled: null,
+      }};
+      if (target.slot_scope === "age group") {{
+        const index = target.slots + ageGroupDeclines - 1;
+        return {{
+          standard: null,
+          performanceEquivalent: null,
+          performanceRolled: null,
+          legacyCutoff: target.cutoff,
+          legacyRolled: index >= 0 && index < target.times.length ? target.times[index] : null,
+        }};
+      }}
+      const standard = target.standard_cutoff;
+      const rolledStandard = poolCutoff(
+        year, gender, target.performance_slots, poolDeclines
+      );
+      const ratio = qualificationRatio(gender);
+      return {{
+        standard,
+        performanceEquivalent: Number.isFinite(standard) && Number.isFinite(ratio) ? standard / ratio : null,
+        performanceRolled: Number.isFinite(rolledStandard) && Number.isFinite(ratio) ? rolledStandard / ratio : null,
+        legacyCutoff: null,
+        legacyRolled: null,
+      }};
+    }}
+    function historicalSourceLabel(source) {{
+      if (!source) return "—";
+      if (Number.isFinite(source.male) || Number.isFinite(source.female)) {{
+        return `${{source.male ?? "—"}} M / ${{source.female ?? "—"}} F`;
+      }}
+      if (Number.isFinite(source.total) && Number.isFinite(source.published_allocation_total) && source.total !== source.published_allocation_total) {{
+        return `${{source.total}} source / ${{source.published_allocation_total}} published`;
+      }}
+      return Number.isFinite(source.total) ? `${{source.total}} total` : "—";
+    }}
+    function historicalSourceHtml(source) {{
+      const label = historicalSourceLabel(source);
+      const url = source?.allocation_source_url || source?.source_url;
+      return url ? `<a href="${{url}}" target="_blank" rel="noreferrer">${{label}}</a>` : label;
+    }}
+    function renderHistoricalAgeGroupTargets(targets, ageGroups, years, gender) {{
+      const colors = ["#006d77", "#e76f51", "#277da1", "#7a6f3d", "#8f5d8c", "#2a9d8f", "#bc4749"];
+      const prefix = gender === "Male" ? "M" : "F";
+      const series = years.map((year, index) => ({{
+        label: year,
+        color: colors[index % colors.length],
+        values: ageGroups.map(ageGroup => targets.find(row =>
+          row.year === year && row.gender === gender && row.division === `${{prefix}}${{ageGroup}}`
+        )?.cutoff ?? null),
+      }}));
+      document.getElementById("ageGroupTargetChartTitle").textContent = `${{gender === "Male" ? "Male" : "Female"}} raw finish-time target by age group`;
+      lineChart("ageGroupTargetChart", ageGroups, series);
+    }}
+    function renderHistoricalQualification() {{
+      const qualification = dataset().historical_qualification;
+      document.querySelectorAll(".current-rule-only").forEach(element => element.hidden = true);
+      document.querySelectorAll(".historical-rule-only").forEach(element => element.hidden = false);
+      document.getElementById("qualificationSlotsLabel").textContent = "Historical slot allocation";
+      document.getElementById("qualificationSelectedTotalLabel").textContent = "Latest sourced race total";
+      const ageGroups = qualificationAgeGroups();
+      const previousAgeGroup = qualificationAgeGroup.value;
+      qualificationAgeGroup.innerHTML = ageGroups.map(ageGroup => `<option value="${{ageGroup}}">${{ageGroup}}</option>`).join("");
+      qualificationAgeGroup.value = ageGroups.includes(previousAgeGroup) ? previousAgeGroup : (ageGroups.includes("30-34") ? "30-34" : ageGroups[0]);
+      const ageGroup = qualificationAgeGroup.value;
+      const gender = qualificationGender.value;
+      const prefix = gender === "Male" ? "M" : "F";
+      const poolDeclines = Math.max(0, Math.round(Number(qualificationDeclines.value) || 0));
+      const ageGroupDeclines = Math.max(0, Math.round(Number(qualificationLegacyDeclines.value) || 0));
+      const years = [...new Set(qualification.targets.map(row => row.year))].sort();
+      const latestTarget = [...qualification.targets].sort((left, right) => left.year.localeCompare(right.year)).at(-1);
+      document.getElementById("qualificationSlotsMetric").textContent = "Varies by race-year";
+      document.getElementById("qualificationSelectedTotalMetric").textContent = latestTarget
+        ? `${{historicalSourceLabel(latestTarget.source)}} (${{latestTarget.year}})`
+        : "Unavailable";
+
+      const standardName = dataset().group === "703" ? "70.3 Standard" : "Kona Standard";
+      document.getElementById("qualificationHead").innerHTML = `<tr><th>Year</th><th>Method</th><th>Source slots</th><th>M / F total slots</th><th>M / F ${{ageGroup}} slots</th><th title="Performance-pool years only: the age-graded cutoff in the selected gender's pool.">${{standardName}} cutoff</th><th title="Performance-pool years only: the gender-wide pool cutoff converted to the equivalent raw ${{prefix}}${{ageGroup}} finish time.">${{prefix}}${{ageGroup}} pool equivalent (0 declines)</th><th title="Performance-pool years only: the athlete ${{poolDeclines}} places beyond the gender-wide pool cutoff, converted to the equivalent raw ${{prefix}}${{ageGroup}} finish time.">${{prefix}}${{ageGroup}} pool equivalent (X=${{poolDeclines}})</th><th title="Legacy age-group allocation years only: raw finish time of the last strictly qualified athlete in ${{prefix}}${{ageGroup}}, before roll-down.">${{prefix}}${{ageGroup}} age-group cutoff (0 declines)</th><th title="Legacy age-group allocation years only: raw finish time after ${{ageGroupDeclines}} declines within ${{prefix}}${{ageGroup}}.">${{prefix}}${{ageGroup}} age-group cutoff (Y=${{ageGroupDeclines}})</th></tr>`;
+      document.getElementById("qualificationBody").innerHTML = years.map(year => {{
+        const male = historicalTarget(year, "Male", ageGroup);
+        const female = historicalTarget(year, "Female", ageGroup);
+        const selected = gender === "Male" ? male : female;
+        const source = selected?.source || male?.source || female?.source;
+        const method = selected?.method || male?.method || female?.method || "Unavailable";
+        const totalSlots = `${{historicalGenderSlots(year, "Male") ?? "—"}} / ${{historicalGenderSlots(year, "Female") ?? "—"}}`;
+        const ageGroupSlots = `${{historicalAgeGroupSlots(year, "Male", ageGroup) ?? "—"}} / ${{historicalAgeGroupSlots(year, "Female", ageGroup) ?? "—"}}`;
+        const cutoffs = historicalCutoffs(year, gender, ageGroup, poolDeclines, ageGroupDeclines);
+        return `<tr><td>${{year}}</td><td>${{method}}</td><td>${{historicalSourceHtml(source)}}</td><td>${{totalSlots}}</td><td>${{ageGroupSlots}}</td><td>${{qualificationDuration(cutoffs.standard)}}</td><td>${{qualificationDuration(cutoffs.performanceEquivalent)}}</td><td>${{qualificationDuration(cutoffs.performanceRolled)}}</td><td>${{qualificationDuration(cutoffs.legacyCutoff)}}</td><td>${{qualificationDuration(cutoffs.legacyRolled)}}</td></tr>`;
+      }}).join("");
+      const unavailable = qualification.unavailable_years.length
+        ? ` Historical source data is unavailable for: ${{qualification.unavailable_years.join(", ")}}.`
+        : "";
+      document.getElementById("qualificationNote").textContent = `Historical mode uses sourced race-year slots. Performance-pool columns are filled only for years using the ${{standardName}} system; X=${{poolDeclines}} moves down the selected gender's pool regardless of age group. Age-group cutoff columns are filled only for legacy allocation years; Y=${{ageGroupDeclines}} moves down within ${{prefix}}${{ageGroup}}. M / F age-group slots are published or reconstructed allocations in legacy years and projected no-decline qualifiers in performance-pool years.${{unavailable}}`;
+      document.getElementById("qualificationTableTitle").textContent = `Historical qualification by year · ${{prefix}}${{ageGroup}}`;
+      document.getElementById("qualificationChartTitle").textContent = `Historical cutoff and roll-down · ${{prefix}}${{ageGroup}}`;
+      const cutoffs = years.map(year => historicalCutoffs(year, gender, ageGroup, poolDeclines, ageGroupDeclines));
+      const series = [
+        {{ label: `${{prefix}}${{ageGroup}} cutoff`, color: "#277da1", values: cutoffs.map(row => row.performanceEquivalent ?? row.legacyCutoff) }},
+        {{ label: `${{prefix}}${{ageGroup}} roll-down (X=${{poolDeclines}} pool / Y=${{ageGroupDeclines}} AG)`, color: "#e76f51", values: cutoffs.map(row => row.performanceRolled ?? row.legacyRolled) }},
+      ];
+      lineChart("qualificationChart", years, series);
+      renderHistoricalAgeGroupTargets(qualification.targets, ageGroups, years, gender);
+    }}
+    function renderQualification() {{
+      if (qualificationSystem === "historical") renderHistoricalQualification();
+      else renderCurrentQualification();
+    }}
+    function overallStats() {{
+      const proTimes = dataset().pro_times || {{}};
+      return Object.entries(dataset().overall).map(([year, values]) => {{
+        const mean = values.reduce((sum, value) => sum + value, 0) / values.length;
+        const pro = proTimes[year] || {{ male: [], female: [] }};
+        return {{
+          year, finishers: values.length, mean, median: median(values),
+          top20pct: values[Math.ceil(values.length * 0.2) - 1],
+          top100: values[Math.min(99, values.length - 1)],
+          top50: values[Math.min(49, values.length - 1)],
+          top20: values[Math.min(19, values.length - 1)],
+          top10ProMale: pro.male.length >= 10 ? pro.male[9] : null,
+          top10ProFemale: pro.female.length >= 10 ? pro.female[9] : null,
+        }};
+      }});
+    }}
+    function renderOverall() {{
+      const stats = overallStats();
+      document.getElementById("overallBody").innerHTML = stats.map(row => `<tr><td>${{row.year}}</td><td>${{row.finishers.toLocaleString()}}</td><td>${{duration(row.mean)}}</td><td>${{duration(row.median)}}</td><td>${{duration(row.top20pct)}}</td><td>${{duration(row.top100)}}</td><td>${{duration(row.top50)}}</td><td>${{duration(row.top20)}}</td><td>${{duration(row.top10ProMale)}}</td><td>${{duration(row.top10ProFemale)}}</td></tr>`).join("");
+      const years = stats.map(row => row.year);
+      lineChart("averageChart", years, [
+        {{ label: "Mean", color: "#006d77", values: stats.map(row => row.mean) }},
+        {{ label: "Median", color: "#e76f51", values: stats.map(row => row.median) }},
+      ]);
+      lineChart("cutoffChart", years, [
+        {{ label: "Top 20%", color: "#006d77", values: stats.map(row => row.top20pct) }},
+        {{ label: "Top 100", color: "#e76f51", values: stats.map(row => row.top100) }},
+        {{ label: "Top 50", color: "#8f5d8c", values: stats.map(row => row.top50) }},
+        {{ label: "Top 20", color: "#43aa8b", values: stats.map(row => row.top20) }},
+      ]);
+      densityChart(dataset().overall);
+    }}
+    function renderStatistics() {{
+      const rows = dataset().statistics || [];
+      const percent = value => Number.isFinite(value) ? `${{value.toFixed(1)}}%` : "—";
+      document.getElementById("statisticsBody").innerHTML = rows.map(row => {{
+        const completion = Number.isFinite(row.completion_rate) ? percent(row.completion_rate * 100) : "—";
+        const pctMale = row.finishers ? percent(100 * row.male_finishers / row.finishers) : "—";
+        const pctFemale = row.finishers ? percent(100 * row.female_finishers / row.finishers) : "—";
+        return `<tr><td>${{row.year}}</td><td>${{row.registered.toLocaleString()}}</td><td>${{row.starters.toLocaleString()}}</td><td>${{row.finishers.toLocaleString()}}</td><td>${{row.dns.toLocaleString()}}</td><td>${{row.dnf.toLocaleString()}}</td><td>${{row.dq.toLocaleString()}}</td><td>${{completion}}</td><td>${{row.male_finishers.toLocaleString()}}</td><td>${{row.female_finishers.toLocaleString()}}</td><td>${{pctMale}}</td><td>${{pctFemale}}</td><td>${{row.pro_finishers.toLocaleString()}}</td><td>${{duration(row.avg_finish)}}</td><td>${{duration(row.median_finish)}}</td></tr>`;
+      }}).join("");
+      const years = rows.map(row => row.year);
+      const countFormat = value => Number.isFinite(value) ? Math.round(value).toLocaleString() : "—";
+      lineChart("statusChart", years, [
+        {{ label: "Finishers", color: "#006d77", values: rows.map(row => row.finishers) }},
+        {{ label: "DNS", color: "#e4b84d", values: rows.map(row => row.dns) }},
+        {{ label: "DNF", color: "#d94b4b", values: rows.map(row => row.dnf) }},
+      ], countFormat, {{ zeroBaseline: true }});
+      lineChart("genderChart", years, [
+        {{ label: "Male finishers", color: "#277da1", values: rows.map(row => row.male_finishers) }},
+        {{ label: "Female finishers", color: "#e76f51", values: rows.map(row => row.female_finishers) }},
+      ], countFormat, {{ zeroBaseline: true }});
+      lineChart("completionChart", years, [
+        {{
+          label: "Finishers / (finishers + DNF)",
+          color: "#43aa8b",
+          values: rows.map(row => row.finishers + row.dnf ? 100 * row.finishers / (row.finishers + row.dnf) : null),
+        }},
+        {{
+          label: "Finishers / (finishers + DNF + DNS)",
+          color: "#277da1",
+          values: rows.map(row => row.finishers + row.dnf + row.dns ? 100 * row.finishers / (row.finishers + row.dnf + row.dns) : null),
+        }},
+      ], percent);
+    }}
+    function updateTitle() {{
+      const labels = {{ splits: "Split Explorer", qualification: "Qualification", overall: "Overall Times", statistics: "Race Statistics", compare: "Compare Races", experimental: "Experimental" }};
+      const aggregateView = activeTab === "compare" || activeTab === "experimental";
+      document.querySelector(".event-control").hidden = aggregateView;
+      document.getElementById("eventTitle").textContent = aggregateView ? labels[activeTab] : `${{dataset().name}} · ${{labels[activeTab]}}`;
+    }}
+    function raceGroups() {{
+      const groups = {{}};
+      for (const [id, event] of Object.entries(DATASETS)) {{
+        const key = event.group || "im";
+        if (!groups[key]) groups[key] = [];
+        groups[key].push(id);
+      }}
+      return groups;
+    }}
+    const compareColors = ["#006d77", "#e76f51", "#277da1", "#7a6f3d", "#8f5d8c", "#2a9d8f", "#bc4749", "#d18b25", "#577590", "#6a994e"];
+    const compareYears = [...new Set(Object.values(DATASETS).flatMap(event => Object.keys(event.overall)))].sort();
+    function compareYearColor(year) {{
+      return compareColors[compareYears.indexOf(year) % compareColors.length];
+    }}
+    function yearSeries(eventIds, valueForYear) {{
+      const years = [...new Set(eventIds.flatMap(id => Object.keys(DATASETS[id].overall)))].sort();
+      return years.map(year => ({{
+        label: year,
+        color: compareYearColor(year),
+        values: eventIds.map(id => {{
+          const result = valueForYear(id, year);
+          const value = typeof result === "object" && result !== null ? result.value : result;
+          const detail = typeof result === "object" && result !== null ? result.detail : null;
+          return Number.isFinite(value) ? [{{ year, value, detail }}] : [];
+        }}),
+      }}));
+    }}
+    function categoryPointChart(elementId, categories, series, options = {{}}) {{
+      const svg = document.getElementById(elementId);
+      const width = svg.viewBox.baseVal.width, height = svg.viewBox.baseVal.height;
+      const legendColumnWidth = 160;
+      const legendColumns = Math.max(1, Math.floor((width - 92) / legendColumnWidth));
+      const legendRows = Math.ceil(series.length / legendColumns);
+      const margin = {{ left: options.yAxisLabel ? 104 : 84, right: 24, top: 16 + legendRows * 22, bottom: 86 }};
+      const values = series.flatMap(item => item.values.flat().map(entry => entry.value).filter(Number.isFinite));
+      if (!categories.length || !values.length) {{ svg.innerHTML = `<text x="20" y="40">No data available</text>`; return; }}
+      let minimum = Math.min(...values), maximum = Math.max(...values);
+      if (options.includeZero) {{ minimum = Math.min(minimum, 0); maximum = Math.max(maximum, 0); }}
+      if (Number.isFinite(options.minimum)) minimum = options.minimum;
+      if (Number.isFinite(options.maximum)) maximum = options.maximum;
+      if (options.zeroBasedNice) {{
+        minimum = 0;
+        const rawStep = Math.max(maximum / 4, Number.EPSILON);
+        const magnitude = 10 ** Math.floor(Math.log10(rawStep));
+        const normalized = rawStep / magnitude;
+        const niceNormalized = normalized <= 1 ? 1 : normalized <= 2 ? 2 : normalized <= 5 ? 5 : 10;
+        const step = niceNormalized * magnitude;
+        maximum = step * 4;
+        if (Number.isFinite(options.maximumCap)) {{
+          maximum = Math.min(maximum, options.maximumCap);
+        }}
+      }} else if (!Number.isFinite(options.minimum) || !Number.isFinite(options.maximum)) {{
+        const minimumPadding = Number.isFinite(options.minimumPadding) ? options.minimumPadding : 300;
+        const padding = Math.max((maximum - minimum) * 0.18, minimumPadding);
+        if (!Number.isFinite(options.minimum)) minimum -= padding;
+        if (!Number.isFinite(options.maximum)) maximum += padding;
+      }}
+      if (options.nonnegative) minimum = Math.max(0, minimum);
+      if (maximum <= minimum) maximum = minimum + 1;
+      const groupWidth = (width - margin.left - margin.right) / categories.length;
+      const clusterWidth = Math.min(groupWidth * 0.42, Math.max(0, (series.length - 1) * 7));
+      const pointSpacing = series.length > 1 ? clusterWidth / (series.length - 1) : 0;
+      const y = value => margin.top + (maximum - value) * (height - margin.top - margin.bottom) / (maximum - minimum);
+      let markup = "";
+      for (let tick = 0; tick <= 4; tick++) {{
+        const value = minimum + (maximum - minimum) * tick / 4;
+        const yPosition = y(value);
+        const tickText = options.formatTick ? options.formatTick(value) : duration(value).slice(0, 5);
+        markup += `<line class="grid" x1="${{margin.left}}" y1="${{yPosition}}" x2="${{width - margin.right}}" y2="${{yPosition}}"/><text x="${{margin.left - 8}}" y="${{yPosition + 4}}" text-anchor="end">${{tickText}}</text>`;
+      }}
+      if (options.includeZero) {{
+        markup += `<line x1="${{margin.left}}" y1="${{y(0)}}" x2="${{width - margin.right}}" y2="${{y(0)}}" stroke="#6f7b76" stroke-width="1.5" stroke-dasharray="5 4"/>`;
+      }}
+      categories.forEach((category, categoryIndex) => {{
+        const labelX = margin.left + categoryIndex * groupWidth + groupWidth / 2;
+        const labelY = height - 66;
+        markup += `<text x="${{labelX}}" y="${{labelY}}" text-anchor="end" transform="rotate(-30 ${{labelX}} ${{labelY}})">${{category}}</text>`;
+        series.forEach((item, seriesIndex) => {{
+          const cx = labelX + (seriesIndex - (series.length - 1) / 2) * pointSpacing;
+          const yearValues = item.values[categoryIndex] || [];
+          yearValues.forEach(({{ year, value, detail }}) => {{
+            if (!Number.isFinite(value)) return;
+            const formattedValue = options.formatValue ? options.formatValue(value) : duration(value);
+            const valueText = detail ? `${{formattedValue}} · ${{detail}}` : formattedValue;
+            const accessibleLabel = `${{item.label}}, ${{category}}, ${{year}}: ${{valueText}}`;
+            markup += `<circle class="data-point" cx="${{cx}}" cy="${{y(value)}}" r="5" fill="${{item.color}}" tabindex="0" role="img" aria-label="${{accessibleLabel}}" data-series="${{category}}" data-year="${{year}}" data-value="${{valueText}}"><title>${{accessibleLabel}}</title></circle>`;
+          }});
+        }});
+      }});
+      markup += `<line class="axis" x1="${{margin.left}}" y1="${{margin.top}}" x2="${{margin.left}}" y2="${{height - margin.bottom}}"/><line class="axis" x1="${{margin.left}}" y1="${{height - margin.bottom}}" x2="${{width - margin.right}}" y2="${{height - margin.bottom}}"/>`;
+      if (options.yAxisLabel) {{
+        const axisMiddle = (margin.top + height - margin.bottom) / 2;
+        markup += `<text x="18" y="${{axisMiddle}}" text-anchor="middle" transform="rotate(-90 18 ${{axisMiddle}})">${{options.yAxisLabel}}</text>`;
+      }}
+      series.forEach((item, seriesIndex) => {{
+        const legendColumn = seriesIndex % legendColumns;
+        const legendRow = Math.floor(seriesIndex / legendColumns);
+        const legendX = margin.left + legendColumn * legendColumnWidth;
+        const legendY = 15 + legendRow * 22;
+        markup += `<circle cx="${{legendX + 6}}" cy="${{legendY - 5}}" r="5" fill="${{item.color}}"/><text x="${{legendX + 19}}" y="${{legendY}}">${{item.label}}</text>`;
+      }});
+      svg.innerHTML = markup;
+      attachPointTooltips(svg);
+    }}
+    function quantile(sortedValues, fraction) {{
+      if (!sortedValues.length) return null;
+      const position = (sortedValues.length - 1) * fraction;
+      const lower = Math.floor(position), upper = Math.ceil(position);
+      if (lower === upper) return sortedValues[lower];
+      return sortedValues[lower] + (sortedValues[upper] - sortedValues[lower]) * (position - lower);
+    }}
+    function stackedPercentageChart(elementId, categories, rows) {{
+      const svg = document.getElementById(elementId);
+      const width = svg.viewBox.baseVal.width, height = svg.viewBox.baseVal.height;
+      const margin = {{ left: 72, right: 24, top: 50, bottom: 90 }};
+      const plotHeight = height - margin.top - margin.bottom;
+      const groupWidth = (width - margin.left - margin.right) / Math.max(categories.length, 1);
+      const barWidth = Math.min(64, groupWidth * 0.62);
+      const splitDefinitions = [
+        ["Swim", "swim", "#287da1"], ["T1", "t1", "#e9b949"],
+        ["Bike", "bike", "#189b74"], ["T2", "t2", "#ee8147"],
+        ["Run", "run", "#d94b4b"],
+      ];
+      if (!categories.length) {{ svg.innerHTML = `<text x="20" y="40">No data available</text>`; return; }}
+      const y = value => margin.top + (100 - value) * plotHeight / 100;
+      let markup = "";
+      for (let tick = 0; tick <= 4; tick++) {{
+        const value = tick * 25, yPosition = y(value);
+        markup += `<line class="grid" x1="${{margin.left}}" y1="${{yPosition}}" x2="${{width - margin.right}}" y2="${{yPosition}}"/><text x="${{margin.left - 8}}" y="${{yPosition + 4}}" text-anchor="end">${{value}}%</text>`;
+      }}
+      categories.forEach((category, categoryIndex) => {{
+        const center = margin.left + categoryIndex * groupWidth + groupWidth / 2;
+        let cumulative = 0;
+        splitDefinitions.forEach(([label, key, color]) => {{
+          const value = rows[categoryIndex]?.values?.[key] || 0;
+          const top = cumulative + value;
+          const segmentHeight = Math.max(0, y(cumulative) - y(top));
+          const accessibleLabel = `${{category}}, ${{label}}: ${{value.toFixed(1)}}%`;
+          markup += `<rect class="data-point" x="${{center - barWidth / 2}}" y="${{y(top)}}" width="${{barWidth}}" height="${{segmentHeight}}" fill="${{color}}" tabindex="0" role="img" aria-label="${{accessibleLabel}}" data-series="${{category}}" data-year="${{rows[categoryIndex]?.count || 0}} finishers" data-value="${{label}} ${{value.toFixed(1)}}%"><title>${{accessibleLabel}}</title></rect>`;
+          cumulative = top;
+        }});
+        const labelY = height - 66;
+        markup += `<text x="${{center}}" y="${{labelY}}" text-anchor="end" transform="rotate(-30 ${{center}} ${{labelY}})">${{category}}</text>`;
+      }});
+      markup += `<line class="axis" x1="${{margin.left}}" y1="${{margin.top}}" x2="${{margin.left}}" y2="${{height - margin.bottom}}"/><line class="axis" x1="${{margin.left}}" y1="${{height - margin.bottom}}" x2="${{width - margin.right}}" y2="${{height - margin.bottom}}"/>`;
+      splitDefinitions.forEach(([label, , color], index) => {{
+        const legendX = margin.left + index * 130;
+        markup += `<rect x="${{legendX}}" y="16" width="12" height="12" fill="${{color}}"/><text x="${{legendX + 18}}" y="27">${{label}}</text>`;
+      }});
+      svg.innerHTML = markup;
+      attachPointTooltips(svg);
+    }}
+    function rangeCategoryChart(elementId, categories, ranges) {{
+      const svg = document.getElementById(elementId);
+      const width = svg.viewBox.baseVal.width, height = svg.viewBox.baseVal.height;
+      const validValues = ranges.flatMap(row => row ? [row.minimum, row.q1, row.median, row.q3, row.maximum] : []).filter(Number.isFinite);
+      if (!categories.length || !validValues.length) {{ svg.innerHTML = `<text x="20" y="40">No data available</text>`; return; }}
+      const margin = {{ left: 92, right: 24, top: 28, bottom: 90 }};
+      let minimum = Math.min(...validValues), maximum = Math.max(...validValues);
+      const padding = Math.max((maximum - minimum) * 0.18, 180);
+      minimum -= padding; maximum += padding;
+      const groupWidth = (width - margin.left - margin.right) / categories.length;
+      const boxWidth = Math.min(48, groupWidth * 0.5);
+      const y = value => margin.top + (maximum - value) * (height - margin.top - margin.bottom) / (maximum - minimum);
+      let markup = "";
+      for (let tick = 0; tick <= 4; tick++) {{
+        const value = minimum + (maximum - minimum) * tick / 4;
+        const yPosition = y(value);
+        markup += `<line class="grid" x1="${{margin.left}}" y1="${{yPosition}}" x2="${{width - margin.right}}" y2="${{yPosition}}"/><text x="${{margin.left - 8}}" y="${{yPosition + 4}}" text-anchor="end">${{duration(value).slice(0, 5)}}</text>`;
+      }}
+      categories.forEach((category, index) => {{
+        const row = ranges[index];
+        const center = margin.left + index * groupWidth + groupWidth / 2;
+        if (row) {{
+          markup += `<line x1="${{center}}" y1="${{y(row.maximum)}}" x2="${{center}}" y2="${{y(row.minimum)}}" stroke="#65716c" stroke-width="2"/>`;
+          markup += `<line x1="${{center - boxWidth / 3}}" y1="${{y(row.maximum)}}" x2="${{center + boxWidth / 3}}" y2="${{y(row.maximum)}}" stroke="#65716c" stroke-width="2"/><line x1="${{center - boxWidth / 3}}" y1="${{y(row.minimum)}}" x2="${{center + boxWidth / 3}}" y2="${{y(row.minimum)}}" stroke="#65716c" stroke-width="2"/>`;
+          markup += `<rect x="${{center - boxWidth / 2}}" y="${{y(row.q3)}}" width="${{boxWidth}}" height="${{Math.max(1, y(row.q1) - y(row.q3))}}" fill="#dcece7" stroke="#00796b"/>`;
+          const detail = `Median ${{duration(row.median)}} · IQR ${{duration(row.q1)}}–${{duration(row.q3)}} · range ${{duration(row.minimum)}}–${{duration(row.maximum)}} · n=${{row.count}}`;
+          markup += `<circle class="data-point" cx="${{center}}" cy="${{y(row.median)}}" r="5" fill="#00796b" tabindex="0" role="img" aria-label="${{category}}: ${{detail}}" data-series="${{category}}" data-year="${{row.count}} years" data-value="${{detail}}"><title>${{category}}: ${{detail}}</title></circle>`;
+        }}
+        const labelY = height - 66;
+        markup += `<text x="${{center}}" y="${{labelY}}" text-anchor="end" transform="rotate(-30 ${{center}} ${{labelY}})">${{category}}</text>`;
+      }});
+      markup += `<line class="axis" x1="${{margin.left}}" y1="${{margin.top}}" x2="${{margin.left}}" y2="${{height - margin.bottom}}"/><line class="axis" x1="${{margin.left}}" y1="${{height - margin.bottom}}" x2="${{width - margin.right}}" y2="${{height - margin.bottom}}"/>`;
+      svg.innerHTML = markup;
+      attachPointTooltips(svg);
+    }}
+    function renderDistributionCompare(elementId, eventIds) {{
+      const categories = eventIds.map(id => DATASETS[id].name);
+      const series = yearSeries(eventIds, (id, year) => {{
+        const values = DATASETS[id].overall[year] || [];
+        return values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : null;
+      }});
+      categoryPointChart(elementId, categories, series);
+    }}
+    function renderExperimental() {{
+      const eventIds = (raceGroups().im || []).filter(id =>
+        id !== "im_france" && Number.isFinite(DATASETS[id].bike_course_correction?.correction)
+      );
+      const categories = eventIds.map(id => DATASETS[id].name);
+      const correctedResult = (id, rawValue, description) => {{
+        const course = DATASETS[id].bike_course_correction;
+        const operator = course.correction >= 0 ? "−" : "+";
+        return {{
+          value: rawValue - course.correction,
+          detail: `${{description}} ${{duration(rawValue)}} · GPX correction ${{operator}}${{duration(Math.abs(course.correction))}} · CDF ${{course.course_difficulty_factor.toFixed(4)}}`,
+        }};
+      }};
+      const series = yearSeries(eventIds, (id, year) => {{
+        const values = DATASETS[id].overall[year] || [];
+        if (!values.length) return null;
+        const rawMean = values.reduce((sum, value) => sum + value, 0) / values.length;
+        return correctedResult(id, rawMean, "raw mean");
+      }});
+      categoryPointChart("experimentalImDistribution", categories, series, {{
+        yAxisLabel: "Course-normalized mean finish time (HH:MM)",
+      }});
+
+      const percentage = Math.min(100, Math.max(0.1, Number(experimentalPercentile.value) || 20));
+      const percentageLabel = Number.isInteger(percentage) ? percentage.toFixed(0) : percentage.toFixed(1);
+      const percentileSeries = yearSeries(eventIds, (id, year) => {{
+        const values = DATASETS[id].overall[year] || [];
+        if (!values.length) return null;
+        const rank = Math.max(1, Math.ceil(values.length * percentage / 100));
+        const rawCutoff = values[Math.min(rank - 1, values.length - 1)];
+        return correctedResult(
+          id,
+          rawCutoff,
+          `raw top-${{percentageLabel}}% cutoff (rank ${{rank}}/${{values.length}})`,
+        );
+      }});
+      document.getElementById("experimentalPercentileTitle").textContent = `Course-normalized top-${{percentageLabel}}% finisher cutoff`;
+      categoryPointChart(
+        "experimentalPercentileDistribution",
+        categories,
+        percentileSeries,
+        {{ yAxisLabel: `Course-normalized top-${{percentageLabel}}% cutoff (HH:MM)` }},
+      );
+    }}
+    function compareAgeGroups(eventIds) {{
+      const male = new Set(), female = new Set();
+      eventIds.forEach(id => {{
+        const targets = qualificationSystem === "historical"
+          ? DATASETS[id].historical_qualification.targets
+          : DATASETS[id].qualification.targets;
+        targets.forEach(row => {{
+          if (row.gender === "Male") male.add(row.division.slice(1));
+          if (row.gender === "Female") female.add(row.division.slice(1));
+        }});
+      }});
+      return [...male].filter(ageGroup => female.has(ageGroup)).sort((left, right) => Number(left.split("-")[0]) - Number(right.split("-")[0]));
+    }}
+    function raceQualificationYearlyValues(eventId, gender, ageGroup) {{
+      const ds = DATASETS[eventId];
+      const division = `${{gender === "Male" ? "M" : "F"}}${{ageGroup}}`;
+      if (qualificationSystem === "historical") {{
+        return ds.historical_qualification.targets
+          .filter(row => row.gender === gender && row.division === division && Number.isFinite(row.cutoff))
+          .map(row => ({{
+            year: row.year,
+            value: row.cutoff,
+            detail: `${{row.method}} · ${{row.slots}} ${{row.slot_scope}} slots · ${{row.starters}} starters · source ${{historicalSourceLabel(row.source)}}`,
+          }}));
+      }}
+      return ds.qualification.targets
+        .filter(row => row.gender === gender && row.division === division)
+        .map(row => {{
+          const summary = ds.qualification.summaries.find(item => item.year === row.year);
+          const performanceSlots = gender === "Male" ? summary?.male_perf : summary?.female_perf;
+          const automaticSlots = gender === "Male" ? summary?.male_auto : summary?.female_auto;
+          const genderSlots = Number(performanceSlots) + Number(automaticSlots);
+          const detail = Number.isFinite(performanceSlots) && Number.isFinite(automaticSlots)
+            ? `Slots used: ${{performanceSlots}} performance-pool (${{automaticSlots}} automatic; ${{genderSlots}} gender total)`
+            : null;
+          return {{ year: row.year, value: parseTime(row.finish_target), detail }};
+        }})
+        .filter(entry => Number.isFinite(entry.value));
+    }}
+    function renderQualificationCompareGroup(elementId, eventIds, ageGroup, gender) {{
+      const availableEventIds = eventIds.filter(id => raceQualificationYearlyValues(id, gender, ageGroup).length);
+      const categories = availableEventIds.map(id => DATASETS[id].name);
+      const valuesByEvent = Object.fromEntries(availableEventIds.map(id => [id, Object.fromEntries(
+        raceQualificationYearlyValues(id, gender, ageGroup).map(entry => [entry.year, entry])
+      )]));
+      const series = yearSeries(availableEventIds, (id, year) => valuesByEvent[id][year]);
+      categoryPointChart(elementId, categories, series);
+    }}
+    function selectedAgeGroupRecords(eventId, year, gender, ageGroup) {{
+      const cacheKey = `${{eventId}}|${{gender}}|${{ageGroup}}`;
+      if (!selectedAgeGroupRecordCache.has(cacheKey)) {{
+        const division = `${{gender === "Male" ? "M" : "F"}}${{ageGroup}}`;
+        const byYear = {{}};
+        DATASETS[eventId].records.forEach(row => {{
+          if (row.gender !== gender || row.division !== division) return;
+          if (!byYear[row.year]) byYear[row.year] = [];
+          byYear[row.year].push(row);
+        }});
+        selectedAgeGroupRecordCache.set(cacheKey, byYear);
+      }}
+      return selectedAgeGroupRecordCache.get(cacheKey)[year] || [];
+    }}
+    function slotPressureForYear(eventId, year, gender, ageGroup) {{
+      const dataset = DATASETS[eventId];
+      if (qualificationSystem === "historical") {{
+        const division = `${{gender === "Male" ? "M" : "F"}}${{ageGroup}}`;
+        const target = dataset.historical_qualification.targets.find(row =>
+          row.year === year && row.gender === gender && row.division === division
+        );
+        if (!target) return null;
+        if (target.slot_scope === "age group") {{
+          return target.starters > 0 ? {{
+            value: 100 * target.slots / target.starters,
+            detail: `${{target.slots}} slots / ${{target.starters}} ${{division}} starters`,
+          }} : null;
+        }}
+        const summary = dataset.qualification.summaries.find(row => row.year === year);
+        const starters = summary?.[`${{gender.toLowerCase()}}_starters`];
+        return starters > 0 ? {{
+          value: 100 * target.slots / starters,
+          detail: `${{target.slots}} gender slots / ${{starters}} eligible starters`,
+        }} : null;
+      }}
+      const summary = dataset.qualification.summaries.find(row => row.year === year);
+      if (!summary) return null;
+      const key = gender.toLowerCase();
+      const slots = summary[`${{key}}_auto`] + summary[`${{key}}_perf`];
+      const starters = summary[`${{key}}_starters`];
+      return starters > 0 ? {{
+        value: 100 * slots / starters,
+        detail: `${{slots}} gender slots / ${{starters}} eligible starters`,
+      }} : null;
+    }}
+    function renderAdditionalCompare(eventIds, ageGroup, gender) {{
+      const qualificationByEvent = Object.fromEntries(eventIds.map(eventId => [
+        eventId,
+        Object.fromEntries(
+          raceQualificationYearlyValues(eventId, gender, ageGroup).map(row => [row.year, row])
+        ),
+      ]));
+
+      const pressureEventIds = eventIds.filter(eventId =>
+        Object.keys(DATASETS[eventId].overall).some(year =>
+          Number.isFinite(slotPressureForYear(eventId, year, gender, ageGroup)?.value)
+        )
+      );
+      categoryPointChart(
+        "compareSlotPressure",
+        pressureEventIds.map(eventId => DATASETS[eventId].name),
+        yearSeries(pressureEventIds, (eventId, year) =>
+          slotPressureForYear(eventId, year, gender, ageGroup)
+        ),
+        {{
+          formatValue: value => `${{value.toFixed(2)}} slots / 100`,
+          formatTick: value => value.toFixed(1),
+          yAxisLabel: "Slots per 100 eligible starters",
+          nonnegative: true,
+          zeroBasedNice: true,
+        }},
+      );
+
+      const percentileEventIds = eventIds.filter(eventId =>
+        Object.keys(qualificationByEvent[eventId]).some(year =>
+          selectedAgeGroupRecords(eventId, year, gender, ageGroup).length
+        )
+      );
+      categoryPointChart(
+        "compareCutoffPercentile",
+        percentileEventIds.map(eventId => DATASETS[eventId].name),
+        yearSeries(percentileEventIds, (eventId, year) => {{
+          const cutoff = qualificationByEvent[eventId][year]?.value;
+          const records = selectedAgeGroupRecords(eventId, year, gender, ageGroup);
+          if (!Number.isFinite(cutoff) || !records.length) return null;
+          const qualified = records.filter(row => row.overall <= cutoff).length;
+          return {{
+            value: 100 * qualified / records.length,
+            detail: `${{qualified}} of ${{records.length}} finishers at or faster than ${{duration(cutoff)}}`,
+          }};
+        }}),
+        {{
+          formatValue: value => `${{value.toFixed(1)}}%`,
+          formatTick: value => `${{Number.isInteger(value) ? value.toFixed(0) : value.toFixed(1)}}%`,
+          yAxisLabel: "Cutoff percentile within selected age group",
+          zeroBasedNice: true,
+          maximumCap: 100,
+        }},
+      );
+
+      const depthEventIds = eventIds.filter(eventId =>
+        Object.keys(DATASETS[eventId].overall).some(year =>
+          selectedAgeGroupRecords(eventId, year, gender, ageGroup).length
+        )
+      );
+      categoryPointChart(
+        "compareAgeGroupDepth",
+        depthEventIds.map(eventId => DATASETS[eventId].name),
+        yearSeries(depthEventIds, (eventId, year) => {{
+          const count = selectedAgeGroupRecords(eventId, year, gender, ageGroup).length;
+          return count ? {{ value: count, detail: `${{count}} split-complete finishers` }} : null;
+        }}),
+        {{
+          formatValue: value => `${{Math.round(value)}} finishers`,
+          formatTick: value => Math.round(value).toString(),
+          yAxisLabel: "Selected age-group finishers",
+          nonnegative: true,
+        }},
+      );
+
+      const splitRows = [];
+      const splitEventIds = [];
+      eventIds.forEach(eventId => {{
+        const division = `${{gender === "Male" ? "M" : "F"}}${{ageGroup}}`;
+        const rows = Object.keys(DATASETS[eventId].overall).flatMap(year =>
+          eventId === "im_france" && year === "2019"
+            ? []
+            : selectedAgeGroupRecords(eventId, year, gender, ageGroup)
+        );
+        if (!rows.length) return;
+        const percentageSums = Object.fromEntries(
+          splits.map(([, key]) => [key, 0])
+        );
+        rows.forEach(row => {{
+          const total = splits.reduce((sum, [, key]) => sum + row[key], 0);
+          splits.forEach(([, key]) => {{
+            percentageSums[key] += 100 * row[key] / total;
+          }});
+        }});
+        splitEventIds.push(eventId);
+        splitRows.push({{
+          count: rows.length,
+          values: Object.fromEntries(
+            Object.entries(percentageSums).map(([key, value]) => [key, value / rows.length])
+          ),
+        }});
+      }});
+      stackedPercentageChart(
+        "compareSplitContribution",
+        splitEventIds.map(eventId => DATASETS[eventId].name),
+        splitRows,
+      );
+
+      const uncertaintyEventIds = eventIds.filter(eventId =>
+        raceQualificationYearlyValues(eventId, gender, ageGroup).some(row =>
+          !excludeMeanQualificationRaceYear(eventId, row.year)
+        )
+      );
+      const ranges = uncertaintyEventIds.map(eventId => {{
+        const values = raceQualificationYearlyValues(eventId, gender, ageGroup)
+          .filter(row => !excludeMeanQualificationRaceYear(eventId, row.year))
+          .map(row => row.value)
+          .filter(Number.isFinite)
+          .sort((left, right) => left - right);
+        return values.length ? {{
+          minimum: values[0],
+          q1: quantile(values, 0.25),
+          median: quantile(values, 0.5),
+          q3: quantile(values, 0.75),
+          maximum: values.at(-1),
+          count: values.length,
+        }} : null;
+      }});
+      rangeCategoryChart(
+        "compareQualificationUncertainty",
+        uncertaintyEventIds.map(eventId => DATASETS[eventId].name),
+        ranges,
+      );
+    }}
+    function meanFinishForYear(eventId, year) {{
+      const values = DATASETS[eventId].overall[year] || [];
+      return values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : null;
+    }}
+    function excludeMeanQualificationRaceYear(eventId, year) {{
+      return (eventId === "im_france" && year === "2019")
+        || (eventId === "im_frankfurt" && year === "2026");
+    }}
+    function linearFit(points) {{
+      if (points.length < 2) return null;
+      const meanX = points.reduce((sum, point) => sum + point.x, 0) / points.length;
+      const meanY = points.reduce((sum, point) => sum + point.y, 0) / points.length;
+      const varianceX = points.reduce(
+        (sum, point) => sum + (point.x - meanX) ** 2, 0
+      );
+      if (varianceX <= 0) return null;
+      const covariance = points.reduce(
+        (sum, point) => sum + (point.x - meanX) * (point.y - meanY), 0
+      );
+      const slope = covariance / varianceX;
+      return {{ slope, intercept: meanY - slope * meanX }};
+    }}
+    function fitEquation(fit) {{
+      const sign = fit.intercept < 0 ? "−" : "+";
+      return `qualifying time = ${{fit.slope.toFixed(3)}} × mean finish time ${{sign}} ${{duration(Math.abs(fit.intercept))}}`;
+    }}
+    function meanQualificationScatter(eventIds, ageGroup, gender) {{
+      const svg = document.getElementById("compareMeanQualification");
+      const width = svg.viewBox.baseVal.width, height = svg.viewBox.baseVal.height;
+      const raceIds = Object.keys(DATASETS);
+      const allSeries = eventIds.map(eventId => {{
+        const qualificationByYear = Object.fromEntries(
+          raceQualificationYearlyValues(eventId, gender, ageGroup).map(entry => [entry.year, entry])
+        );
+        const points = Object.keys(DATASETS[eventId].overall).sort()
+          .filter(year => !excludeMeanQualificationRaceYear(eventId, year))
+          .map(year => ({{
+            year,
+            x: meanFinishForYear(eventId, year),
+            y: qualificationByYear[year]?.value,
+            slotDetail: qualificationByYear[year]?.detail,
+          }}))
+          .filter(point => Number.isFinite(point.x) && Number.isFinite(point.y));
+        return {{
+          eventId,
+          label: DATASETS[eventId].name,
+          color: compareColors[raceIds.indexOf(eventId) % compareColors.length],
+          points,
+        }};
+      }}).filter(item => item.points.length);
+      const series = allSeries.filter(item => !hiddenMeanQualificationRaces.has(item.eventId));
+      const points = series.flatMap(item => item.points);
+      if (!allSeries.length) {{ svg.innerHTML = `<text x="20" y="40">No matching race-year data available</text>`; return; }}
+      if (!points.length) hiddenMeanQualificationRaces.delete(allSeries[0].eventId);
+      const visibleSeries = allSeries.filter(item => !hiddenMeanQualificationRaces.has(item.eventId));
+      const visiblePoints = visibleSeries.flatMap(item => item.points);
+      const globalFit = linearFit(visiblePoints);
+
+      const legendColumnWidth = 190;
+      const legendColumns = Math.max(1, Math.floor((width - 112) / legendColumnWidth));
+      const legendRows = Math.ceil(allSeries.length / legendColumns);
+      const margin = {{ left: 92, right: 28, top: 18 + legendRows * 22, bottom: 66 }};
+      let xMinimum = Math.min(...visiblePoints.map(point => point.x));
+      let xMaximum = Math.max(...visiblePoints.map(point => point.x));
+      let yMinimum = Math.min(...visiblePoints.map(point => point.y));
+      let yMaximum = Math.max(...visiblePoints.map(point => point.y));
+      const xPadding = Math.max((xMaximum - xMinimum) * 0.1, 300);
+      const yPadding = Math.max((yMaximum - yMinimum) * 0.1, 180);
+      xMinimum -= xPadding; xMaximum += xPadding;
+      yMinimum -= yPadding; yMaximum += yPadding;
+      const x = value => margin.left + (value - xMinimum) * (width - margin.left - margin.right) / (xMaximum - xMinimum);
+      const y = value => margin.top + (yMaximum - value) * (height - margin.top - margin.bottom) / (yMaximum - yMinimum);
+      let markup = `<defs><clipPath id="meanQualificationClip"><rect x="${{margin.left}}" y="${{margin.top}}" width="${{width - margin.left - margin.right}}" height="${{height - margin.top - margin.bottom}}"/></clipPath></defs>`;
+      for (let tick = 0; tick <= 5; tick++) {{
+        const xValue = xMinimum + (xMaximum - xMinimum) * tick / 5;
+        const yValue = yMinimum + (yMaximum - yMinimum) * tick / 5;
+        const xPosition = x(xValue), yPosition = y(yValue);
+        markup += `<line class="grid" x1="${{xPosition}}" y1="${{margin.top}}" x2="${{xPosition}}" y2="${{height - margin.bottom}}"/><text x="${{xPosition}}" y="${{height - 40}}" text-anchor="middle">${{duration(xValue).slice(0, 5)}}</text>`;
+        markup += `<line class="grid" x1="${{margin.left}}" y1="${{yPosition}}" x2="${{width - margin.right}}" y2="${{yPosition}}"/><text x="${{margin.left - 9}}" y="${{yPosition + 4}}" text-anchor="end">${{duration(yValue).slice(0, 5)}}</text>`;
+      }}
+      markup += `<line class="axis" x1="${{margin.left}}" y1="${{margin.top}}" x2="${{margin.left}}" y2="${{height - margin.bottom}}"/><line class="axis" x1="${{margin.left}}" y1="${{height - margin.bottom}}" x2="${{width - margin.right}}" y2="${{height - margin.bottom}}"/>`;
+      markup += `<text class="corner-label easy-label" x="${{margin.left + 12}}" y="${{margin.top + 20}}">Easiest to qualify</text>`;
+      markup += `<text class="corner-label hard-label" x="${{width - margin.right - 12}}" y="${{height - margin.bottom - 12}}" text-anchor="end">Hardest to qualify</text>`;
+      markup += `<text x="${{(margin.left + width - margin.right) / 2}}" y="${{height - 8}}" text-anchor="middle">Mean finish time (HH:MM)</text>`;
+      markup += `<text x="18" y="${{(margin.top + height - margin.bottom) / 2}}" text-anchor="middle" transform="rotate(-90 18 ${{(margin.top + height - margin.bottom) / 2}})">Raw qualifying time (HH:MM)</text>`;
+      if (globalFit) {{
+        const fitMinimum = Math.min(...visiblePoints.map(point => point.x));
+        const fitMaximum = Math.max(...visiblePoints.map(point => point.x));
+        const equation = fitEquation(globalFit);
+        markup += `<line class="global-fit" x1="${{x(fitMinimum)}}" y1="${{y(globalFit.intercept + globalFit.slope * fitMinimum)}}" x2="${{x(fitMaximum)}}" y2="${{y(globalFit.intercept + globalFit.slope * fitMaximum)}}" stroke="#15231e" stroke-width="3.5" stroke-dasharray="9 6" clip-path="url(#meanQualificationClip)"><title>Global linear fit: ${{equation}}</title></line>`;
+        markup += `<rect x="${{width - margin.right - 520}}" y="${{margin.top + 7}}" width="508" height="27" rx="3" fill="#ffffff" fill-opacity="0.92" stroke="#aebcb5"/>`;
+        markup += `<text class="global-fit-equation" x="${{width - margin.right - 20}}" y="${{margin.top + 25}}" text-anchor="end" font-size="12" font-weight="700" fill="#15231e">Global fit: ${{equation}}</text>`;
+      }}
+      allSeries.forEach((item, seriesIndex) => {{
+        const legendColumn = seriesIndex % legendColumns;
+        const legendRow = Math.floor(seriesIndex / legendColumns);
+        const legendX = margin.left + legendColumn * legendColumnWidth;
+        const legendY = 15 + legendRow * 22;
+        const visible = !hiddenMeanQualificationRaces.has(item.eventId);
+        markup += `<g class="trace-toggle" data-event-id="${{item.eventId}}" role="button" tabindex="0" aria-pressed="${{visible}}" aria-label="${{visible ? "Hide" : "Show"}} ${{item.label}}"><line x1="${{legendX}}" y1="${{legendY - 5}}" x2="${{legendX + 18}}" y2="${{legendY - 5}}" stroke="${{item.color}}" stroke-width="2.5"/><circle cx="${{legendX + 9}}" cy="${{legendY - 5}}" r="4" fill="${{item.color}}"/><text x="${{legendX + 25}}" y="${{legendY}}">${{item.label}}</text><title>Click to ${{visible ? "hide" : "show"}} ${{item.label}}</title></g>`;
+      }});
+      visibleSeries.forEach(item => {{
+        const raceFit = linearFit(item.points);
+        if (raceFit) {{
+          const fitMinimum = Math.min(...item.points.map(point => point.x));
+          const fitMaximum = Math.max(...item.points.map(point => point.x));
+          markup += `<line x1="${{x(fitMinimum)}}" y1="${{y(raceFit.intercept + raceFit.slope * fitMinimum)}}" x2="${{x(fitMaximum)}}" y2="${{y(raceFit.intercept + raceFit.slope * fitMaximum)}}" stroke="${{item.color}}" stroke-width="2.5" stroke-opacity="0.82" clip-path="url(#meanQualificationClip)"/>`;
+        }}
+        item.points.forEach(point => {{
+          const meanText = duration(point.x);
+          const targetText = duration(point.y);
+          const slotText = point.slotDetail ? ` · ${{point.slotDetail}}` : "";
+          const accessibleLabel = `${{item.label}}, ${{point.year}}: mean ${{meanText}}, qualifying ${{targetText}}${{slotText}}`;
+          markup += `<circle class="data-point" cx="${{x(point.x)}}" cy="${{y(point.y)}}" r="5.5" fill="${{item.color}}" tabindex="0" role="img" aria-label="${{accessibleLabel}}" data-series="${{item.label}}" data-year="${{point.year}}" data-value="Mean ${{meanText}} · target ${{targetText}}${{slotText}}"><title>${{accessibleLabel}}</title></circle>`;
+        }});
+      }});
+      svg.innerHTML = markup;
+      attachPointTooltips(svg);
+      svg.querySelectorAll(".trace-toggle").forEach(toggle => {{
+        const toggleTrace = () => {{
+          const eventId = toggle.dataset.eventId;
+          if (hiddenMeanQualificationRaces.has(eventId)) {{
+            hiddenMeanQualificationRaces.delete(eventId);
+          }} else if (visibleSeries.length > 1) {{
+            hiddenMeanQualificationRaces.add(eventId);
+          }}
+          renderMeanQualificationCompare();
+        }};
+        toggle.addEventListener("click", toggleTrace);
+        toggle.addEventListener("keydown", event => {{
+          if (event.key === "Enter" || event.key === " ") {{
+            event.preventDefault();
+            toggleTrace();
+          }}
+        }});
+      }});
+      qualificationResidualChart(
+        visibleSeries.map(item => item.eventId), visibleSeries, globalFit
+      );
+    }}
+    function signedDuration(seconds) {{
+      if (!Number.isFinite(seconds)) return "—";
+      const sign = seconds > 0 ? "+" : seconds < 0 ? "−" : "";
+      return `${{sign}}${{duration(Math.abs(seconds))}}`;
+    }}
+    function signedDurationShort(seconds) {{
+      if (!Number.isFinite(seconds)) return "—";
+      const sign = seconds > 0 ? "+" : seconds < 0 ? "−" : "";
+      return `${{sign}}${{duration(Math.abs(seconds)).slice(0, 5)}}`;
+    }}
+    function qualificationResidualChart(eventIds, sourceSeries, globalFit) {{
+      const sourcePoints = sourceSeries.flatMap(item => item.points);
+      const svg = document.getElementById("compareQualificationResidual");
+      if (sourcePoints.length < 2) {{ svg.innerHTML = `<text x="20" y="40">Not enough data for a global fit</text>`; return; }}
+      if (!globalFit) {{ svg.innerHTML = `<text x="20" y="40">Mean finish times do not vary enough for a global fit</text>`; return; }}
+
+      const pointsByEvent = Object.fromEntries(sourceSeries.map(item => [item.eventId, Object.fromEntries(
+        item.points.map(point => {{
+          const fitted = globalFit.intercept + globalFit.slope * point.x;
+          return [point.year, {{
+            value: point.y - fitted,
+            detail: `Actual ${{duration(point.y)}} · fitted ${{duration(fitted)}}`,
+          }}];
+        }})
+      )]));
+      const residualSeries = yearSeries(eventIds, (eventId, year) => pointsByEvent[eventId]?.[year]);
+      categoryPointChart(
+        "compareQualificationResidual",
+        eventIds.map(eventId => DATASETS[eventId].name),
+        residualSeries,
+        {{
+          includeZero: true,
+          formatValue: signedDuration,
+          formatTick: signedDurationShort,
+          yAxisLabel: "Actual minus fitted qualifying time (HH:MM)",
+        }}
+      );
+    }}
+    function renderQualificationCompare() {{
+      const groups = raceGroups();
+      if (compareImAgeGroup.value) {{
+        renderQualificationCompareGroup("compareImQualification", groups.im || [], compareImAgeGroup.value, compareImGender.value);
+      }}
+      if (compare703AgeGroup.value) {{
+        renderQualificationCompareGroup("compare703Qualification", groups["703"] || [], compare703AgeGroup.value, compare703Gender.value);
+      }}
+    }}
+    function renderMeanQualificationCompare() {{
+      const eventIds = (raceGroups()[compareScatterDistance.value] || []).filter(eventId => eventId !== "im_kona");
+      const ageGroups = compareAgeGroups(eventIds);
+      populateAgeGroupSelect(compareScatterAgeGroup, ageGroups);
+      if (compareScatterAgeGroup.value) {{
+        meanQualificationScatter(eventIds, compareScatterAgeGroup.value, compareScatterGender.value);
+        renderAdditionalCompare(
+          eventIds, compareScatterAgeGroup.value, compareScatterGender.value
+        );
+      }}
+    }}
+    function populateAgeGroupSelect(select, ageGroups) {{
+      const previous = select.value;
+      select.innerHTML = ageGroups.map(ageGroup => `<option value="${{ageGroup}}">${{ageGroup}}</option>`).join("");
+      select.value = ageGroups.includes(previous) ? previous : (ageGroups.includes("30-34") ? "30-34" : ageGroups[0]);
+    }}
+    function renderCompare() {{
+      const groups = raceGroups();
+      const imEvents = groups.im || [];
+      const events703 = groups["703"] || [];
+      renderDistributionCompare("compareImDistribution", imEvents);
+      renderDistributionCompare("compare703Distribution", events703);
+      populateAgeGroupSelect(compareImAgeGroup, compareAgeGroups(imEvents));
+      populateAgeGroupSelect(compare703AgeGroup, compareAgeGroups(events703));
+      renderQualificationCompare();
+      renderMeanQualificationCompare();
+    }}
+    function render() {{
+      const lower = parseTime(fromInput.value);
+      const upper = parseTime(toInput.value);
+      if (!Number.isFinite(lower) || !Number.isFinite(upper) || lower > upper) return;
+      const rows = filteredData();
+      document.getElementById("finisherCount").textContent = rows.length.toLocaleString();
+      document.getElementById("rangeLabel").textContent = `${{duration(lower)}}–${{duration(upper)}}`;
+      const middle = Math.floor(rows.length / 2);
+      const median = rows.length % 2
+        ? rows[middle].overall
+        : (rows[middle - 1]?.overall + rows[middle]?.overall) / 2;
+      document.getElementById("medianFinish").textContent = rows.length ? duration(median) : "—";
+      document.getElementById("summaryBody").innerHTML = summaryRows(rows);
+      document.getElementById("finishersBody").innerHTML = finisherRows(rows);
+    }}
+    function downloadCsv() {{
+      const rows = filteredData();
+      const headers = ["Year", "Bib", "Name", "Country", "Gender", "Division", "Overall", "Swim", "Swim Pace", "T1", "Bike", "Bike Speed", "T2", "Run", "Run Pace"];
+      const values = rows.map(row => [row.year, row.bib, row.name, row.country, row.gender, row.division, duration(row.overall), duration(row.swim), metric("swim", row.swim), duration(row.t1), duration(row.bike), metric("bike", row.bike), duration(row.t2), duration(row.run), metric("run", row.run)]);
+      const csv = [headers, ...values].map(line => line.map(value => `"${{String(value).replaceAll('"', '""')}}"`).join(",")).join("\\r\\n");
+      const link = document.createElement("a");
+      link.href = URL.createObjectURL(new Blob([csv], {{ type: "text/csv" }}));
+      link.download = `${{eventSelect.value}}_splits_${{fromInput.value.replaceAll(":", "")}}_${{toInput.value.replaceAll(":", "")}}.csv`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      setTimeout(() => URL.revokeObjectURL(link.href), 1000);
+    }}
+
+    function selectEvent(resetRange = true) {{
+      const current = dataset();
+      const years = [...new Set(current.records.map(row => row.year))].sort();
+      document.getElementById("eventSubtitle").textContent = `${{current.subtitle}} · finishers from ${{years[0]}}–${{years.at(-1)}}`;
+      document.getElementById("distanceNote").textContent = `Zero-duration placeholders are excluded from split statistics. Paces use ${{current.distances.swim / 1000}} km swim, ${{current.distances.bike}} km bike, and ${{current.distances.run}} km run.`;
+      yearsElement.innerHTML = years.map(year => `<label><input type="checkbox" value="${{year}}" checked>${{year}}</label>`).join("");
+      if (resetRange) {{
+        fromInput.value = current.default_from;
+        toInput.value = current.default_to;
+      }}
+      render();
+      renderQualification();
+      renderOverall();
+      renderStatistics();
+      updateTitle();
+    }}
+
+    eventSelect.innerHTML = Object.entries(DATASETS).map(([id, event]) => `<option value="${{id}}">${{event.name}}</option>`).join("");
+    eventSelect.addEventListener("change", () => selectEvent(true));
+    document.querySelectorAll(".tab-button").forEach(button => button.addEventListener("click", () => {{
+      activeTab = button.dataset.tab;
+      document.querySelectorAll(".tab-button").forEach(item => {{
+        item.classList.toggle("active", item === button);
+        item.setAttribute("aria-selected", item === button ? "true" : "false");
+      }});
+      document.querySelectorAll(".tab-panel").forEach(panel => panel.classList.toggle("active", panel.id === `${{activeTab}}Panel`));
+      updateTitle();
+    }}));
+    [fromInput, toInput, searchInput, yearsElement].forEach(element => element.addEventListener("input", render));
+    qualificationAgeGroup.addEventListener("change", renderQualification);
+    qualificationGender.addEventListener("change", renderQualification);
+    qualificationDeclines.addEventListener("input", renderQualification);
+    qualificationLegacyDeclines.addEventListener("input", renderQualification);
+    experimentalPercentile.addEventListener("input", renderExperimental);
+    [maleSlots, femaleSlots].forEach(element => element.addEventListener("change", updateSlotAllocation));
+    document.getElementById("resetSlots").addEventListener("click", () => {{
+      delete slotAllocations[eventSelect.value];
+      syncSlotControls();
+      renderQualification();
+    }});
+    document.getElementById("download").addEventListener("click", downloadCsv);
+    const compareImAgeGroup = document.getElementById("compareImAgeGroup");
+    const compareImGender = document.getElementById("compareImGender");
+    const compare703AgeGroup = document.getElementById("compare703AgeGroup");
+    const compare703Gender = document.getElementById("compare703Gender");
+    [compareImAgeGroup, compareImGender, compare703AgeGroup, compare703Gender].forEach(control => control.addEventListener("change", renderQualificationCompare));
+    const compareScatterDistance = document.getElementById("compareScatterDistance");
+    const compareScatterAgeGroup = document.getElementById("compareScatterAgeGroup");
+    const compareScatterGender = document.getElementById("compareScatterGender");
+    [compareScatterDistance, compareScatterAgeGroup, compareScatterGender].forEach(control => control.addEventListener("change", renderMeanQualificationCompare));
+    const qualificationSystemControls = [...document.querySelectorAll(".qualification-system")];
+    qualificationSystemControls.forEach(control => control.addEventListener("change", () => {{
+      qualificationSystem = control.value;
+      qualificationSystemControls.forEach(item => item.value = qualificationSystem);
+      renderQualification();
+      renderCompare();
+    }}));
+    selectEvent(true);
+    renderCompare();
+    renderExperimental();
+  </script>
+</body>
+</html>"""
+
+
+def main():
+    ensure_output_directories()
+    datasets = load_dashboard_data()
+    data_json = json.dumps(datasets, ensure_ascii=False).replace("</", "<\\/")
+    DATA_FILE.write_text(
+        f"window.DASHBOARD_DATA = {data_json};\n", encoding="utf-8"
+    )
+    OUTPUT_FILE.write_text(build_html(datasets), encoding="utf-8")
+    counts = ", ".join(
+        f"{event['name']}: {len(event['records'])}"
+        for event in datasets.values()
+    )
+    print(f"Embedded finishers ({counts}).")
+    print(f"Saved dashboard to {OUTPUT_FILE.resolve()}")
+    print(f"Saved dashboard data to {DATA_FILE.resolve()}")
+
+
+if __name__ == "__main__":
+    main()
