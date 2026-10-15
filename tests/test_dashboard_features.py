@@ -2,6 +2,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -36,12 +37,14 @@ class DashboardUiContractTests(unittest.TestCase):
         self.assertIn("Historically correct rules", self.html)
         self.assertIn("Current performance pool on historical results", self.html)
 
-    def test_qualification_views_share_model_and_cross_race_panels_are_reparented_once(self):
-        source = (Path(__file__).resolve().parents[1] / "src" / "dashboard_ui.js").read_text()
+    def test_qualification_workspace_is_a_four_step_flow_with_embedded_evidence(self):
+        source = (Path(__file__).resolve().parents[1] / "src" / "dashboard_ui.js").read_text(encoding="utf-8")
         self.assertNotIn('class="qualification-system"', self.html)
         self.assertEqual(source.count('name="contextRules" value='), 2)
-        self.assertIn('views: ["qualification", "easiest", "odds", "kona", "crossrace"]', source)
-        self.assertIn('crossrace: "Cross-race Analysis"', source)
+        self.assertIn('const qualificationSteps = ["qtime", "qdifficulty", "qualification", "easiest"];', source)
+        self.assertIn('qualification: {label: "Qualification", views: qualificationSteps}', source)
+        for label in ("1 · Your time", "2 · Race difficulty", "3 · Qualification targets", "4 · Where to qualify"):
+            self.assertIn(label, source)
         for view in ("qualification", "easiest", "odds"):
             start = source.index(f"function {'renderSelectedQualification' if view == 'qualification' else 'renderFinderApproaches' if view == 'easiest' else 'renderOddsApproaches'}()")
             end = source.find("\nfunction ", start + 1)
@@ -58,8 +61,11 @@ class DashboardUiContractTests(unittest.TestCase):
             "compareQualificationUncertainty",
         })
         self.assertEqual(source.count('crossRacePanel.id = "crossracePanel"'), 1)
-        self.assertIn('crossRacePanel.setAttribute("aria-labelledby", "view-crossrace")', source)
-        self.assertIn('qualification: "Race Targets"', source)
+        # Former Kona Evidence, Target Hits and Cross-race tabs live inside steps 3 and 4.
+        self.assertIn('embedPanel(document.getElementById("konaPanel"))', source)
+        self.assertIn('embedPanel(document.getElementById("oddsPanel"))', source)
+        self.assertIn('evidence.id = "wcEvidence";', source)
+        self.assertIn('stepSection("Cross-race comparison charts", crossRacePanel)', source)
         self.assertIn('document.querySelector(`.legacy-tabs [data-tab="${view}"]`)', source)
         self.assertIn("if (legacyButton) legacyButton.click();", source)
         self.assertIn('activeTab = view;', source)
@@ -67,6 +73,35 @@ class DashboardUiContractTests(unittest.TestCase):
         self.assertRegex(source, r"if \(workspace \|\| view\) clearDashboardReturn\(\);")
         self.assertIn('data-evidence-race="${escapeHtml(standard.eventId)}"', source)
         self.assertIn('document.getElementById("contextReturn")', source)
+        self.assertIn("function currentAbility(", self.html)
+        self.assertIn('["qtime", "easiest"].includes(activeTab)', self.html)
+
+    @unittest.skipUnless(shutil.which("node"), "Node.js is required for dashboard UI tests")
+    def test_roll_down_counts_only_for_rule_compatible_scan_evidence(self):
+        source = (Path(__file__).resolve().parents[1] / "src" / "dashboard_ui.js").read_text(encoding="utf-8")
+        start = source.index("function rollDownEvidence")
+        helper = source[start:source.index("\nfunction renderTargetOverview", start)]
+        fixture = r"""
+const assert = require("node:assert/strict");
+const escapeHtml = value => String(value ?? "");
+const assumptionTime = standard => `T${standard.needed}`;
+"""
+        assertions = r"""
+const pool = (extra) => ({pool_slots: 14, slot_scope: "gender", kona_cycle: "2026", ranking_cycle: "2027",
+    cutoff_scan: {rank: 51}, cutoff_estimate: {rank: 400}, ...extra});
+const standard = (mode, extra = {}) => ({available: true, estimatedCutoffUsed: true, needed: 32000, mode, cutoffPool: pool(extra)});
+assert.equal(rollDownEvidence(standard("scan"), "scan").passed, 37);
+assert.equal(rollDownEvidence(standard("density"), "density").passed, null);
+const legacyRoster = rollDownEvidence(standard("scan", {kona_cycle: "2017"}), "scan");
+assert.equal(legacyRoster.passed, null);
+assert.match(rollDownCell(legacyRoster), /no decline count/);
+assert.equal(rollDownEvidence(standard("scan", {kona_cycle: "2017", ranking_cycle: "2017", slot_scope: "age group", pool_slots: 3, cutoff_scan: {rank: 7}}), "scan").passed, 4);
+assert.equal(rollDownEvidence({...standard("scan"), available: false}, "scan"), null);
+assert.match(rollDownCell(rollDownEvidence(standard("scan"), "scan")), /37 slots passed on \(of 14 pool\)/);
+"""
+        result = subprocess.run(["node"], input=fixture + helper + assertions,
+                                text=True, encoding="utf-8", capture_output=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     @unittest.skipUnless(shutil.which("node"), "Node.js is required for dashboard UI tests")
     def test_manual_navigation_clears_return_navigation_state(self):
@@ -125,24 +160,28 @@ assert.equal(get("historical","density").strictNeeded,33000);
                                 text=True, encoding="utf-8", capture_output=True)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
-    def test_counterfactual_calendar_uses_current_slots_for_every_historical_im_year(self):
+    def test_counterfactual_calendar_keeps_cycle_race_years_with_current_slots(self):
         events = {
             "race": {"group": "im", "qualifying": True, "qualification_slots": 50,
-                     "years": {"2019": ["old.csv"], "2025": ["recent.csv"]}},
+                     "years": {"2017": ["old.csv"], "2025": ["recent.csv"]}},
             "half": {"group": "703", "qualifying": True, "qualification_slots": 30,
-                     "years": {"2025": ["half.csv"]}},
+                     "years": {"2017": ["half.csv"]}},
             "nonqualifying": {"group": "im", "qualifying": False, "qualification_slots": 40,
-                              "years": {"2025": ["other.csv"]}},
+                              "years": {"2017": ["other.csv"]}},
         }
-        cycle = build_dashboard.qualification_full.CURRENT_CYCLE
-        calendar = build_dashboard.current_pool_counterfactual_calendar(
-            events, {"race": "Race", "half": "Half", "nonqualifying": "Other"}, cycle,
-        )
+        names = {"race": "Race", "half": "Half", "nonqualifying": "Other"}
+        cycle_calendar = [
+            {"qualification_cycle": "2017", "race_name": name, "event_year": "2017",
+             "total_qualifiers": 40, "race_date": "2017-07-02"}
+            for name in ("Race", "Half", "Other", "Unknown")
+        ]
+        calendar = build_dashboard.current_pool_counterfactual_calendar(cycle_calendar, events, names)
+        # Only the cycle's own race-years: Austria 2017 is compared with the Kona 2017 start list.
         self.assertEqual(calendar, [
-            {"qualification_cycle": cycle, "race_name": "Race", "event_year": "2019", "total_qualifiers": 50},
-            {"qualification_cycle": cycle, "race_name": "Race", "event_year": "2025", "total_qualifiers": 50},
+            {"qualification_cycle": "2017", "race_name": "Race", "event_year": "2017",
+             "total_qualifiers": 50, "race_date": "2017-07-02"},
         ])
-        self.assertEqual(build_dashboard.current_pool_counterfactual_calendar(events, {}, "2019"), [])
+        self.assertEqual(build_dashboard.current_pool_counterfactual_calendar(cycle_calendar, events, {}), [])
 
     def test_course_analysis_exposes_only_distance_percent_and_shared_years(self):
         for selector in (
@@ -209,6 +248,11 @@ assert.equal(controls.contextLegacyPlaces.label.hidden, true);
 assert.equal(controls.contextLegacyPlaces.disabled, true);
 assert.equal(controls.contextExtraPlaces.label.hidden, false);
 assert.equal(controls.contextExtraPlaces.disabled, false);
+
+activeTab = "qtime";
+updateExtraPlacesControls();
+assert.equal(controls.contextExtraPlaces.label.hidden, true);
+assert.equal(controls.contextLegacyPlaces.label.hidden, true);
 """
         result = subprocess.run(["node"], input=fixture + helper + assertions,
                                 text=True, encoding="utf-8", capture_output=True)
@@ -216,6 +260,22 @@ assert.equal(controls.contextExtraPlaces.disabled, false);
 
 
 class KonaTraceTests(unittest.TestCase):
+    def test_nice_is_a_non_qualifying_championship_merged_into_the_start_list(self):
+        self.assertIn("im_nice_wc", build_dashboard.NON_QUALIFYING_EVENTS)
+        if "im_nice_wc" in build_dashboard.EVENTS:
+            self.assertFalse(build_dashboard.EVENTS["im_nice_wc"]["qualifying"])
+        with tempfile.TemporaryDirectory() as folder:
+            kona_file, nice_file = Path(folder, "kona2023.csv"), Path(folder, "nice2023.csv")
+            row = {"Bib": 1, "Name": "A", "Country": "AUT", "Division": "F30-34", "Gender": "Female",
+                   "Finish": "FIN", "Overall Time": "10:00:00"}
+            pd.DataFrame([row]).to_csv(kona_file, index=False)
+            pd.DataFrame([{**row, "Name": "B", "Division": "M30-34", "Gender": "Male"}]).to_csv(nice_file, index=False)
+            field = build_dashboard.championship_start_list([kona_file], [nice_file])
+            self.assertEqual(field["Venue"].tolist(), ["Kona", "Nice"])
+            trace = kona_trace.build_kona_trace(field, [], {}, build_dashboard.read_results, {}, year="2023")
+            self.assertEqual(trace["venues"], {"Male": ["Nice"], "Female": ["Kona"]})
+            self.assertEqual(build_dashboard.championship_start_list([kona_file], [])["Venue"].tolist(), ["Kona"])
+
     def test_legacy_trace_uses_actual_age_group_slots_and_raw_times(self):
         names = ["Winner Person", "Early Person", "Later Person"]
         race = pd.DataFrame([
@@ -518,7 +578,7 @@ class DashboardComparisonTests(unittest.TestCase):
     def test_absence_labels_follow_the_rank_scope(self):
         script = re.findall(r"<script>(.*?)</script>", build_dashboard.build_html({}), re.S)[0]
         helpers = script[script.index("    function scannedKonaCutoffCell"):script.index("    function manualKonaCutoff")]
-        pool_helper = script[script.index("    function easiestPoolEstimateCell"):script.index("    function renderEasiest")]
+        pool_helper = script[script.index("    function easiestPoolEstimateCell"):script.index("    function renderEasiest()")]
         fixture = r"""
 const assert = require("node:assert/strict");
 const escapeHtml = value => String(value ?? "");
@@ -557,7 +617,8 @@ const counterfactualPool = {event_id:"race",year:"2019",gender:"Male",slot_scope
 const DATASETS = {race:{group:"im",qualification:{standard_cycle:"2026"},
     historical_qualification:{targets:[{year:"2019",division:"M50-54",standard_cycle:"2019"}]}},
     im_kona:{kona_traces:{2019:{year:"2019",standards:{},summaries:{all:[oldPool]}},
-        2026:{year:"2026",standards:{"M50-54":0.8},summaries:{all:[]},counterfactual_summaries:[counterfactualPool]}}}};
+        2026:{year:"2026",standards:{"M50-54":0.8},summaries:{all:[]},counterfactual_standard_cycle:"2026",
+            counterfactual_standards:{"M50-54":0.8},counterfactual_summaries:[counterfactualPool]}}}};
 const get = (system, mode) => easiestQualificationStandard("race","2019","Male","50-54",system,mode,0);
 const actual = get("historical","scan");
 assert.equal(actual.needed,36000);
@@ -577,6 +638,43 @@ assert.match(get("historical","density").cutoffSource,/Match-density boundary.*b
 counterfactualPool.cutoff_estimate.time = 24000;
 assert.equal(get("current","density").needed,35000);
 assert.match(get("current","density").cutoffSource,/Match-density boundary.*bounded by strict allocation/);
+"""
+        result = subprocess.run(["node"], input=fixture + helper, text=True, encoding="utf-8", capture_output=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_current_counterfactual_uses_the_race_years_own_kona_cycle(self):
+        script = re.findall(r"<script>(.*?)</script>", build_dashboard.build_html({}), re.S)[0]
+        helper = script[script.index("    function easiestQualificationStandard"):script.index("    function easiestPoolEstimateCell")]
+        fixture = r"""
+const assert = require("node:assert/strict");
+const qualificationAssumptions = {fallback:false};
+const isModifiedCourse = () => false;
+const strictQualificationStandard = () => ({scope:"gender",division:"M50-54",performanceSlots:20,ratio:0.8,needed:35000,winner:30000});
+const pool = (year, scan) => ({event_id:"race",year,gender:"Male",slot_scope:"gender",division:null,pool_slots:20,
+    cutoff_estimate:{time:null},cutoff_scan:{time:scan,consecutive_absences:15}});
+const trace = (year, pools) => ({year,standards:{},summaries:{all:[]},counterfactual_standard_cycle:"2027",
+    counterfactual_standards:{"M50-54":0.8},counterfactual_summaries:pools});
+const DATASETS = {race:{group:"im",qualification:{standard_cycle:"2027"},
+    historical_qualification:{targets:[{year:"2025",division:"M50-54",standard_cycle:"2026"}]}},
+    im_kona:{kona_trace:null,kona_traces:{
+        2017:trace("2017",[pool("2017",32000)]),
+        2025:trace("2025",[pool("2025",33000)]),
+        2026:trace("2026",[pool("2025",34000),pool("2026",32400)])}}};
+DATASETS.im_kona.kona_trace = DATASETS.im_kona.kona_traces[2026];
+const get = year => easiestQualificationStandard("race",year,"Male","50-54","current","scan",0);
+const old = get("2017");
+assert.equal(old.needed,40000);
+assert.equal(old.cutoffRoster,"2017");
+assert.match(old.cutoffSource,/WC 2017 start list ranked under 2027 rules/);
+assert.equal(get("2026").needed,40500);
+assert.equal(get("2026").cutoffRoster,"2026");
+const missing = get("2019");
+assert.equal(missing.available,false);
+assert.match(missing.unavailableReason,/no World Championship start list/);
+assert.equal(get("2025").needed,42500);
+assert.equal(get("2025").cutoffRoster,"2026");
+DATASETS.race.historical_qualification.targets = [];
+assert.match(get("2025").unavailableReason,/ambiguous/);
 """
         result = subprocess.run(["node"], input=fixture + helper, text=True, encoding="utf-8", capture_output=True)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
@@ -654,7 +752,7 @@ assert.equal(get("places").available,true);
     const isModifiedCourse = (id, year) => year === "2024";
     const pool = {male: [{division:"M30-34", age_graded:30000}, {division:"M30-34", age_graded:31000}], winners:{"M30-34":29000}, automatic:{male:["M30-34"]}};
     const ds = {group:"im", division_stats:{"2026":{"M30-34":{starters:10,finishers:9,median:40000}}}, qualification:{standard_cycle:"2026",ratios:{"M30-34":1},pools:{"2026":pool},summaries:[{year:"2026",male_perf:1,male_auto:1}]}};
-    const DATASETS = {race:ds, im_kona:{kona_trace:{year:"2026",standards:{"M30-34":1},summaries:{all:[{event_id:"race",year:"2026",gender:"Male",pool_slots:1,cutoff_scan:{time:32000}}]}}}};
+    const DATASETS = {race:ds, im_kona:{kona_trace:{year:"2026",standards:{"M30-34":1},summaries:{all:[]},counterfactual_standard_cycle:"2026",counterfactual_standards:{"M30-34":1},counterfactual_summaries:[{event_id:"race",year:"2026",gender:"Male",pool_slots:1,cutoff_scan:{time:32000}}]}}};
     """
         assertions = r"""
     const get = () => qualificationStandard("race","2026","Male","30-34","current");
@@ -688,8 +786,9 @@ let standard = {division: "M50-54", scope: "gender", ratio: 0.8, winner: 34000,
     needed: 35000, ageGraded: 31500, qualifiers: 2, performanceSlots: 20};
 const pool = {event_id: "race", year: "2026", gender: "Male",
     pool_slots: 20, cutoff_estimate: {time: 32000}, cutoff_scan: {time: 32400}};
-const DATASETS = {race: {group: "im"}, half: {group: "703"},
-    im_kona: {kona_trace: {year: "2026", standards: {"M50-54": 0.8}, summaries: {all: [pool]}}}};
+const DATASETS = {race: {group: "im", qualification: {standard_cycle: "2026"}}, half: {group: "703"},
+    im_kona: {kona_trace: {year: "2026", standards: {"M50-54": 0.8}, summaries: {all: [pool]},
+        counterfactual_standard_cycle: "2026", counterfactual_standards: {"M50-54": 0.8}, counterfactual_summaries: [pool]}}};
 const qualificationAssumptions = {fallback: true};
 const isModifiedCourse = () => false;
 const strictQualificationStandard = (id, year, gender, ageGroup, system, options) => {
@@ -708,7 +807,7 @@ assert.equal(result.needed, 40000);
 assert.equal(result.ageGraded, 32000);
 assert.equal(result.ratio, 0.8);
 assert.equal(result.estimatedCutoffUsed, true);
-assert.match(result.cutoffSource, /Density.*2026.*unverified/);
+assert.match(result.cutoffSource, /density.*2026.*exploratory/);
 assert.equal(get("scan").needed, 40500);
 assert.equal(get("scan").qualifiers, 2);
 DATASETS.race.historical_qualification = {targets: [{year: "2026", division: "M50-54", standard_cycle: "2026"}]};
@@ -749,6 +848,8 @@ assert.equal(get("density").available, false);
 standard.ratio = 0.8;
 pool.reported_cutoff = 32280;
 pool.reported_cutoff_precision = "minute";
+assert.equal(get("reported").available, false);
+pool.reported_cutoff_source = "Documented race report";
 assert.equal(get("reported").needed, 40350);
 assert.equal(get("reported").precision, "minute");
 assert.equal(get("strict").needed, 35000);
@@ -907,7 +1008,7 @@ assert.match(svg.innerHTML, /data-year="2024"/);
             'assert.match(estimatedKonaCutoffCell({cutoff_estimate: {time: null, reason: "Insufficient pool matches"}}), /Insufficient pool matches/);',
             'const scanned = {pool_slots: 20, reported_cutoff: 32280, cutoff_scan: {time: 32263, rank: 40, athlete: "<Person>", gap_start_rank: 41, gap_end_rank: 55, consecutive_absences: 15}};',
             'assert.match(scannedKonaCutoffCell(scanned), /08:57:43/);',
-            'assert.match(scannedKonaCutoffCell(scanned), /Pool rank 40/);',
+            'assert.match(scannedKonaCutoffCell(scanned), /gender-pool rank 40/);',
             'assert.match(scannedKonaCutoffCell(scanned), /15 absences: ranks 41 to 55/);',
             'assert.match(scannedKonaCutoffCell(scanned), /&lt;Person&gt;/);',
             'assert.doesNotMatch(scannedKonaCutoffCell(scanned), /Range|BIC|Reported/);',

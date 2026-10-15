@@ -9,25 +9,33 @@ const cutoffApproaches = [
   {mode: "density", label: cutoffLabels.density, color: "#b08900"},
   {mode: "scan", label: cutoffLabels.scan, color: "#277da1"},
 ];
+const qualificationSteps = ["qtime", "qdifficulty", "qualification", "easiest"];
 const dashboardWorkspaces = {
   explorer: {label: "Race Explorer", views: ["statistics", "overall", "splits"]},
   compare: {label: "Compare Races", views: ["compare"]},
-  qualification: {label: "Qualification", views: ["qualification", "easiest", "odds", "kona", "crossrace"]},
+  qualification: {label: "Qualification", views: qualificationSteps},
   course: {label: "Course Analysis", views: ["experimental"]},
 };
 const dashboardViewLabels = {
   statistics: "Participation", overall: "Finish Times", splits: "Athletes & Splits",
-  compare: "Race Comparison", qualification: "Race Targets", easiest: "Race Finder",
-  odds: "Historical Target Hits", kona: "Kona Evidence", crossrace: "Cross-race Analysis",
+  compare: "Race Comparison", qtime: "1 · Your time", qdifficulty: "2 · Race difficulty",
+  qualification: "3 · Qualification targets", easiest: "4 · Where to qualify",
   experimental: "Course & Conditions",
 };
+const qualificationStepIntro = {
+  qtime: "Step 1 of 4 · Everything in this workspace starts from one number: your finish time on a standard course (an average qualifying race-year in average conditions). Type it, or add past results and it is derived split by split, corrected for each course, its race-day conditions and your age group. Gender and age group above are those of your next race.",
+  qdifficulty: "Step 2 of 4 · How fast each qualifying race is, as raced and converted to a standard course, and the time you would be expected to finish there. +5% means the same athlete is 5% slower than on a standard course.",
+  qualification: "Step 3 of 4 · Qualification targets for the race selected above: slots, the finish time needed with strict allocation (every slot accepted), how far the slots rolled down in practice (estimated from World Championship start lists in Kona and Nice), and the targets on a standard course.",
+  easiest: "Step 4 of 4 · Combines your time (step 1), each race's difficulty (step 2) and its targets (step 3) into an estimated chance per race. Expand the sections below for how often your time would have qualified and for cross-race charts.",
+};
+const qualificationStepNext = {qtime: "qdifficulty", qdifficulty: "qualification", qualification: "easiest"};
 const contextControlIds = {
   distance: ["oddsDistance", "easiestDistance", "experimentalDistance", "compareSplitDistance", "compareStatisticsDistance", "compareScatterDistance", "compareFieldDistance", "compareSlotDistance"],
   gender: ["qualificationGender", "oddsGender", "easiestGender", "compareImGender", "compare703Gender", "compareScatterGender", "konaGender", "compareFieldGender"],
   ageGroup: ["qualificationAgeGroup", "oddsAgeGroup", "easiestAgeGroup", "compareImAgeGroup", "compare703AgeGroup", "compareScatterAgeGroup", "compareFieldAgeGroup", "konaAgeGroup"],
 };
 let activeWorkspace = "explorer";
-const workspaceLastView = {explorer: "splits", compare: "compare", qualification: "qualification", course: "experimental"};
+const workspaceLastView = {explorer: "splits", compare: "compare", qualification: "qtime", course: "experimental"};
 
 function renderContextYears() {
   const container = document.getElementById("contextYears");
@@ -51,7 +59,10 @@ function activateDashboardView(view) {
   else {
     activeTab = view;
     document.querySelectorAll(".tab-panel").forEach(panel => panel.classList.toggle("active", panel.id === `${view}Panel`));
+    updateTitle();
   }
+  if (view === "qtime") renderEasiestTab();
+  if (view === "easiest") renderOdds();
   renderWorkspaceNavigation();
   updateDashboardScope();
   decorateDashboard();
@@ -63,13 +74,10 @@ function clearDashboardReturn() {
 }
 
 function updateExtraPlacesControls() {
-  const konaView = activeTab === "kona";
-  const qualificationView = ["qualification", "easiest", "odds", "crossrace"].includes(activeTab);
-  const trace = konaView ? selectedKonaTrace() : null;
-  const poolAvailable = dashboardContext.distance === "im" && (konaView
-    ? trace?.slot_scope === "gender" : qualificationView && qualificationSystem === "current");
-  const legacyAvailable = dashboardContext.distance === "im" && (konaView
-    ? trace?.slot_scope === "age group" : qualificationView && qualificationSystem === "historical");
+  // Extra places only change targets (step 3) and the race ranking (step 4).
+  const targetView = ["qualification", "easiest"].includes(activeTab);
+  const poolAvailable = dashboardContext.distance === "im" && targetView && qualificationSystem === "current";
+  const legacyAvailable = dashboardContext.distance === "im" && targetView && qualificationSystem === "historical";
   for (const [id, available] of [["contextExtraPlaces", poolAvailable], ["contextLegacyPlaces", legacyAvailable]]) {
     const control = document.getElementById(id);
     control.closest("label").hidden = !available;
@@ -79,30 +87,28 @@ function updateExtraPlacesControls() {
 
 function updateDashboardScope() {
   const allAthletes = ["splits", "overall", "statistics"].includes(activeTab);
-  const qualificationView = ["qualification", "easiest", "odds", "crossrace"].includes(activeTab);
-  const cycle = selectedKonaTrace()?.year || "2026";
-  const konaView = activeTab === "kona";
-  const trace = selectedKonaTrace();
-  document.querySelector(".assumption-fields").hidden = !qualificationView && !konaView;
-  document.querySelector(".qualification-approach").hidden = !qualificationView;
-  document.getElementById("contextFallback").closest("label").hidden = konaView;
+  const targetView = ["qualification", "easiest"].includes(activeTab);
+  document.querySelector(".assumption-fields").hidden = !targetView;
+  document.querySelector(".qualification-approach").hidden = !targetView;
+  document.getElementById("contextFallback").closest("label").hidden = !targetView;
   updateExtraPlacesControls();
   document.querySelector("#contextGender").closest("label").hidden = activeTab === "experimental";
   document.querySelector("#contextAgeGroup").closest("label").hidden = activeTab === "experimental";
-  document.querySelector(".context-fields:not(.assumption-fields)").hidden = allAthletes || ["kona", "compare"].includes(activeTab);
+  document.querySelector(".context-fields:not(.assumption-fields)").hidden = allAthletes || activeTab === "compare";
   for (const [id, distance] of [["compareImDistribution", "im"], ["compare703Distribution", "703"], ["compareImQualification", "im"], ["compare703Qualification", "703"]]) {
     document.getElementById(id).closest(".chart-panel").hidden = dashboardContext.distance !== distance;
   }
-  document.getElementById("eventTitle").textContent = allAthletes || ["qualification", "crossrace"].includes(activeTab)
+  const perRace = allAthletes || activeTab === "qualification";
+  document.getElementById("eventTitle").textContent = perRace
     ? `${dataset().name} / ${dashboardViewLabels[activeTab]}` : dashboardViewLabels[activeTab];
   document.getElementById("contextScope").textContent = allAthletes
     ? "All athletes. Gender and age group apply to qualification analyses only."
-    : activeTab === "kona"
-      ? `Kona ${cycle} cycle. Race-year filters affect displayed candidate editions, not matching or estimator evidence. Starter counts cover the full championship field.`
-      : activeTab === "experimental"
-        ? "Selected race years displayed. Published course/season factors and athlete calibration retain their full training scope."
+    : activeTab === "experimental"
+      ? "Selected race years displayed. Published course/season factors and athlete calibration retain their full training scope."
+      : activeTab === "qtime"
+        ? "Your results are converted with course factors fitted on all race years; the year selection does not change them."
         : "Selected race years. Course models and personal-result calibration retain their full source scope.";
-  document.getElementById("eventSubtitle").textContent = allAthletes || ["qualification", "crossrace"].includes(activeTab)
+  document.getElementById("eventSubtitle").textContent = perRace
     ? dataset().subtitle
     : `${dashboardWorkspaces[activeWorkspace].label} / ${dashboardViewLabels[activeTab]}`;
 }
@@ -158,7 +164,7 @@ function qualificationEvidenceLink(standard) {
   if (!pool) return label;
   const reported = standard.mode === "reported" && pool.reported_cutoff_url
     ? `<br><a href="${escapeHtml(pool.reported_cutoff_url)}" target="_blank" rel="noreferrer">${escapeHtml(pool.reported_cutoff_source || "Reported source")}</a>` : "";
-  return `${label}${reported}<br><button type="button" class="context-action" data-evidence-race="${escapeHtml(standard.eventId)}" data-evidence-year="${escapeHtml(standard.year)}" data-evidence-cycle="${escapeHtml(standard.cutoffCycle || "2026")}">Kona evidence</button>`;
+  return `${label}${reported}<br><button type="button" class="context-action" data-evidence-race="${escapeHtml(standard.eventId)}" data-evidence-year="${escapeHtml(standard.year)}" data-evidence-cycle="${escapeHtml(standard.cutoffRoster || standard.cutoffCycle || "2026")}">WC start-list evidence</button>`;
 }
 
 function renderSelectedQualification() {
@@ -172,10 +178,15 @@ function renderSelectedQualification() {
   const standards = Object.fromEntries(years.map(year => [year, Object.fromEntries(approaches.map(({mode}) => [
     mode, approachStandard(eventId, year, gender, ageGroup, qualificationSystem, mode),
   ]))]));
+  const evidenceNote = qualificationSystem === "current"
+    ? `<p class="note">Current-rule density and scan targets for each race year use the start list of the World Championship that race year actually qualified for (e.g. Austria 2017 → Kona 2017 starters; in 2023–2025 Kona and Nice combined), re-ranked under the current rules and allocation. Race years without a local start list for their cycle (e.g. 2027-cycle races) show no estimate. Before the 2026 cycle those starters were selected by age-group rules, so their gender-pool boundary is only indicative.</p>`
+    : "";
   container.innerHTML = `<h2>Targets by approach · ${escapeHtml(divisionFor(gender, ageGroup))}</h2>
     <p class="note">All five approaches are evaluated independently for each race year. Scan labels identify each year's ranking scope and absence threshold. Missing or incompatible evidence stays explicit. Strict fallback means the strict allocation target is shown, not borrowed estimate evidence. Reported minute values and density estimates are approximate. Kona matches are not proof of slot acceptance.</p>
+    ${evidenceNote}
     <p class="note">The exploratory match-density boundary compares observed Kona-starter match rates by ranking position with a constant-rate model, then fits a two-rate breakpoint. It requires at least 3 matches before the breakpoint and positive BIC improvement after the penalty; it reports the best breakpoint and weighted 5%-95% rank/time support, with sensitivity to single-race matches. This is unverified matching density, not evidence of actual acceptance or declines. Race targets never place this boundary faster than strict allocation.</p>
-    <div class="table-wrap"><table><thead><tr><th>Race year</th>${approaches.map(({label}) => `<th>${escapeHtml(label)}</th>`).join("")}</tr></thead><tbody>${years.map(year => `<tr><td>${yearCell(eventId, year)}</td>${approaches.map(({mode}) => `<td>${approachCell(standards[year][mode], mode)}</td>`).join("")}</tr>`).join("") || '<tr><td colspan="6" class="empty">No race years are visible.</td></tr>'}</tbody></table></div>`;
+    <div class="table-wrap"><table><thead><tr><th>Race year</th>${approaches.map(({label}) => `<th>${escapeHtml(label)}</th>`).join("")}</tr></thead><tbody>${years.map(year => `<tr><td>${yearCell(eventId, year)}</td>${approaches.map(({mode}) => `<td>${approachCell(standards[year][mode], mode)}</td>`).join("")}</tr>`).join("") || '<tr><td colspan="6" class="empty">No race years are visible.</td></tr>'}</tbody></table></div>
+    ${approachSummaryTable(eventId, years, approaches, standards)}`;
   lineChart("qualificationChart", years, approaches.map(({mode, label, color}) => ({
     label, color,
     values: years.map(year => {
@@ -183,6 +194,27 @@ function renderSelectedQualification() {
       return standard?.available && Number.isFinite(standard.needed) ? standard.needed : null;
     }),
   })));
+}
+
+// Cross-year summary of each approach's raw target; modified courses are excluded.
+function approachSummaryTable(eventId, years, approaches, standards) {
+  const comparable = years.filter(year => !isModifiedCourse(eventId, year));
+  const rows = approaches.map(({mode, label}) => {
+    const points = comparable
+      .map(year => ({year, standard: standards[year][mode]}))
+      .filter(({standard}) => standard?.available && Number.isFinite(standard.needed));
+    const sorted = points.map(({standard}) => standard.needed).sort((left, right) => left - right);
+    const fit = points.length >= 3 ? linearFit(points.map(({year, standard}) => ({x: Number(year), y: standard.needed}))) : null;
+    const latest = points.at(-1);
+    return `<tr><td>${escapeHtml(label)}</td><td>${points.length} / ${comparable.length}</td>`
+      + `<td>${sorted.length ? neededText(quantile(sorted, 0.5)) : "—"}</td>`
+      + `<td>${sorted.length ? `${neededText(sorted[0])} – ${neededText(sorted.at(-1))}` : "—"}</td>`
+      + `<td>${fit ? `${signedDuration(fit.slope)} / year` : "—"}</td>`
+      + `<td>${latest ? `${assumptionTime(latest.standard)} (${escapeHtml(latest.year)})` : "—"}</td></tr>`;
+  }).join("");
+  return `<h3>Summary across selected race years</h3>
+    <p class="note">Finite targets only ("any finish" years are not counted). Trend is the least-squares slope over race years with at least three values; negative means the target got faster, i.e. harder.</p>
+    <div class="table-wrap"><table><thead><tr><th>Approach</th><th>Years with target</th><th>Median</th><th>Fastest – slowest</th><th>Trend</th><th>Latest</th></tr></thead><tbody>${rows}</tbody></table></div>`;
 }
 
 function approachStandard(eventId, year, gender, ageGroup, system, mode) {
@@ -270,18 +302,17 @@ function renderOddsApproaches() {
     const hit = row.expected <= standard.needed;
     return `<td>${approachCell(standard, mode)}<br><small>${hit ? "Hit" : "Not hit"} · ${escapeHtml(duration(row.expected))} expected</small></td>`;
   }).join("")}</tr>`)).join("") || '<tr><td colspan="7" class="empty">No race years are visible.</td></tr>';
-  const series = byRace.flatMap(({eventId, rows}) => approaches.map(({mode, label, color}) => ({
-    label: `${DATASETS[eventId].name} · ${label}`,
-    color,
-    thresholds: rows.flatMap(row => {
+  const series = approaches.map(({mode, label, color}) => ({
+    label, color,
+    thresholds: byRace.flatMap(({rows}) => rows.flatMap(row => {
       const standard = row.standards[mode];
       const factor = averageBasis ? row.factor : 1;
       return !row.modified && standard?.available && Number.isFinite(standard.needed) && Number.isFinite(factor)
         ? [standard.needed / factor] : [];
-    }),
-  })));
+    })),
+  }));
   stepShareChart("oddsApproachChart", series, entered);
-  section.querySelector(".note").textContent = `${division} · ${group === "im" ? "IRONMAN 140.6" : "IRONMAN 70.3"}. Each race-year row shows its target and whether your entered time meets it for every approach; the chart summarizes compatible years. Modified courses are excluded. Strict fallback means the strict target stands in for an unavailable estimate and is identified explicitly.`;
+  section.querySelector(".note").textContent = `${division} · ${group === "im" ? "IRONMAN 140.6" : "IRONMAN 70.3"}. Each race-year row shows its target and whether your entered time meets it for every approach; the chart pools the compatible race-years of all listed races per approach. Modified courses are excluded. Strict fallback means the strict target stands in for an unavailable estimate and is identified explicitly.`;
 }
 
 function renderFinderApproaches() {
@@ -352,17 +383,205 @@ function decorateQualificationRankings() {
       row.innerHTML = `<td><button type="button" class="race-link" data-target-race="${eventId}">${escapeHtml(DATASETS[eventId].name)}</button></td><td colspan="9">No compatible target for selected race years. Not ranked.</td>`;
     }
   }
-  document.getElementById("easiestRankingNote").textContent = `This ranking is the strict-allocation baseline. The comparison below evaluates strict, manual extra places, reported last accepted, density estimate, and the ${qualificationSystem === "current" ? "15-absence scan" : "scope-specific absence scan"}. Incompatible or unavailable evidence is marked per race year; strict fallback is identified explicitly. Chance is modelled, not historical acceptance probability.`;
   const oddsNote = document.getElementById("oddsRankingNote");
-  oddsNote.textContent = `${oddsNote.textContent.split(" Selected cutoff:")[0]} All five cutoff approaches are compared below. Historical target hits are not verified slot acceptance; incompatible race years are marked unavailable rather than borrowing another edition's evidence.`;
+  const oddsSuffix = " All five cutoff approaches are compared below. Historical target hits are not verified slot acceptance; incompatible race years are marked unavailable rather than borrowing another edition's evidence.";
+  if (!oddsNote.textContent.endsWith(oddsSuffix)) oddsNote.textContent += oddsSuffix;
   const oddsHeader = document.getElementById("oddsRankingHead").querySelectorAll("th")[2];
   if (oddsHeader) oddsHeader.textContent = "Historical Target Hits";
-  const coverageHeader = document.getElementById("easiestRankingHead").querySelectorAll("th")[4];
-  if (coverageHeader) coverageHeader.title = "The main ranking uses strict allocation; the comparison below shows all five approaches per race year.";
+}
+
+function stepMetrics(items) {
+  return `<div class="metrics">${items.map(([label, value]) => `<div class="metric"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>`).join("")}</div>`;
+}
+
+function renderYourTimeSummary() {
+  const container = document.getElementById("qtimeSummary");
+  if (!container) return;
+  const ability = currentAbility();
+  const {profile, averageTime, division, transitions} = ability;
+  const basis = profile.used
+    ? `${profile.used} past result${profile.used === 1 ? "" : "s"}, split by split`
+    : "Typed finish time";
+  const splits = profile.used
+    ? `<div class="table-wrap" style="max-height:none"><table><thead><tr><th>On a standard course</th><th>Swim</th><th>Bike</th><th>Run</th><th>T1 + T2</th><th>Total</th></tr></thead><tbody><tr><td>${escapeHtml(division)}</td>${SWIM_BIKE_RUN.map(split => `<td>${duration(profile.splits[split])}</td>`).join("")}<td>${duration(profile.transitionRatio * transitions)}</td><td><strong>${duration(averageTime)}</strong></td></tr></tbody></table></div>`
+    : `<p class="note">No usable past results for ${escapeHtml(division)} at this distance yet, so the typed time is used. Add results below to derive it from your swim, bike and run.</p>`;
+  container.innerHTML = stepMetrics([
+    ["Your finish time on a standard course", Number.isFinite(averageTime) ? duration(averageTime) : "Enter HH:MM:SS"],
+    ["Based on", basis],
+    ["Next race age group", division],
+  ]) + splits;
+}
+
+function renderRaceDifficulty() {
+  const container = document.getElementById("qdifficultyContent");
+  if (!container || activeTab !== "qdifficulty") return;
+  const group = dashboardContext.distance;
+  const division = divisionFor(dashboardContext.gender, dashboardContext.ageGroup);
+  const {profile, averageTime} = currentAbility(group, division);
+  const splitAbility = profile.used ? profile.splits : null;
+  const races = (raceGroups()[group] || []).filter(isQualifyingEvent).map(eventId => {
+    const rows = allRaceYears(eventId).map(year => {
+      const factor = courseFactor(eventId, year);
+      const stats = DATASETS[eventId].division_stats?.[year]?.[division] || {};
+      const modified = isModifiedCourse(eventId, year);
+      const predicted = !modified && Number.isFinite(averageTime)
+        ? predictRaceYear(eventId, year, splitAbility, profile.transitionRatio, averageTime)?.total ?? null : null;
+      const standardTime = value => Number.isFinite(value) && factor ? value / factor : null;
+      return {
+        year, factor, modified, predicted, finishers: stats.finishers || 0,
+        splits: Object.fromEntries(SWIM_BIKE_RUN.map(split => [split, courseFactor(eventId, year, split)])),
+        conditions: conditionsFactor(eventId, year),
+        median: stats.median ?? null, medianStandard: standardTime(stats.median),
+        winner: stats.winner ?? null, winnerStandard: standardTime(stats.winner),
+      };
+    });
+    const factors = rows.filter(row => !row.modified).map(row => row.factor).filter(Number.isFinite).sort((left, right) => left - right);
+    return {
+      eventId, rows,
+      course: courseEffect(eventId, "overall"),
+      splitEffects: Object.fromEntries(SWIM_BIKE_RUN.map(split => [split, courseEffect(eventId, split)])),
+      factorRange: factors.length ? [factors[0], factors.at(-1)] : null,
+      median: lowerMedian(rows.filter(row => !row.modified).map(row => row.median).filter(Number.isFinite)),
+      medianStandard: lowerMedian(rows.map(row => row.medianStandard).filter(Number.isFinite)),
+      predicted: lowerMedian(rows.map(row => row.predicted).filter(Number.isFinite)),
+    };
+  }).sort((left, right) => (left.course ?? Infinity) - (right.course ?? Infinity));
+  const summaryRows = races.map(race => `<tr><td><button type="button" class="race-link" data-target-race="${race.eventId}">${escapeHtml(DATASETS[race.eventId].name)}</button></td>`
+    + `<td>${race.rows.filter(row => !row.modified && Number.isFinite(row.factor)).length}</td>`
+    + `<td><strong>${signedPercent(race.course)}</strong></td>${SWIM_BIKE_RUN.map(split => `<td>${signedPercent(race.splitEffects[split])}</td>`).join("")}`
+    + `<td>${race.factorRange ? `${signedPercent(race.factorRange[0])} to ${signedPercent(race.factorRange[1])}` : "—"}</td>`
+    + `<td>${duration(race.median)}</td><td>${duration(race.medianStandard)}</td><td><strong>${duration(race.predicted)}</strong></td></tr>`).join("");
+  const yearRows = races.flatMap(race => race.rows.map(row => `<tr><td>${escapeHtml(DATASETS[race.eventId].name)}</td><td>${yearCell(race.eventId, row.year)}</td>`
+    + `<td>${row.modified ? "Modified course" : signedPercent(row.factor)}</td>${SWIM_BIKE_RUN.map(split => `<td>${signedPercent(row.splits[split])}</td>`).join("")}`
+    + `<td>${signedPercent(row.conditions)}</td><td>${row.finishers}</td><td>${duration(row.median)}</td><td>${duration(row.medianStandard)}</td>`
+    + `<td>${duration(row.winner)}</td><td>${duration(row.winnerStandard)}</td><td>${duration(row.predicted)}</td></tr>`)).join("");
+  container.innerHTML = `<h2>Course difficulty by race · ${escapeHtml(division)}</h2>
+    <p class="note">Course effects are season-adjusted (equipment trend removed) and fitted on athletes who raced several race-years. "Race-year range" is the spread of course × season × conditions factors over the selected years. Medians are ${escapeHtml(division)} finishers; "standard course" divides each race-year's time by its factor. Your predicted time is the median over the selected race-years${profile.used ? ", built split by split from your results" : " of your standard-course time × each race-year factor"}. Sorted from fastest to slowest course.</p>
+    <div class="table-wrap" style="max-height:none"><table><thead><tr><th>Race</th><th>Race-years</th><th>Course effect</th><th>Swim</th><th>Bike</th><th>Run</th><th>Race-year range</th><th>Median ${escapeHtml(division)} as raced</th><th>Median on a standard course</th><th>Your predicted time</th></tr></thead><tbody>${summaryRows || '<tr><td colspan="10" class="empty">No qualifying races at this distance.</td></tr>'}</tbody></table></div>
+    <div class="chart-panel wide"><h3>Median ${escapeHtml(division)} finish: as raced vs. on a standard course, and your predicted time</h3><svg id="difficultyChart" class="chart" viewBox="0 0 1000 430"></svg></div>
+    <details class="method"><summary>All race-years: factors, medians, winners and your predicted time</summary>
+    <div class="table-wrap"><table><thead><tr><th>Race</th><th>Year</th><th>Race-year factor</th><th>Swim</th><th>Bike</th><th>Run</th><th title="Race-day conditions after removing course and season.">Conditions</th><th>${escapeHtml(division)} finishers</th><th>Median as raced</th><th>Median on standard course</th><th>Winner as raced</th><th>Winner on standard course</th><th>Your predicted time</th></tr></thead><tbody>${yearRows}</tbody></table></div></details>`;
+  const point = (value, detail) => Number.isFinite(value) ? [{value, detail}] : [];
+  const series = [
+    {label: "Median as raced", color: "#9aa5a0", key: "median"},
+    {label: "Median on a standard course", color: "#006d77", key: "medianStandard"},
+    {label: "Your predicted time", color: "#e76f51", key: "predicted"},
+  ].map(({label, color, key}) => ({label, color, values: races.map(race => race.rows.flatMap(row =>
+    point(row[key], `${row.year} · ${label}: ${duration(row[key])}`).map(entry => ({...entry, year: row.year}))))}));
+  categoryPointChart("difficultyChart", races.map(race => DATASETS[race.eventId].name), series,
+    {formatValue: duration, formatTick: value => duration(value).slice(0, 5), yAxisLabel: "Finish time (HH:MM)"});
+}
+
+function genderSlotBreakdown(eventId, year, system) {
+  const ds = DATASETS[eventId];
+  if (system === "current") {
+    const summary = ds.qualification.summaries.find(row => row.year === year);
+    if (!summary) return null;
+    const pool = key => slotAllocations[eventId]?.[key] ?? summary[`${key}_perf`];
+    return {scope: "gender", Male: {auto: summary.male_auto, pool: pool("male")}, Female: {auto: summary.female_auto, pool: pool("female")}};
+  }
+  const rows = ds.historical_qualification.targets.filter(row => row.year === year);
+  if (!rows.length) return null;
+  if (rows[0].slot_scope === "age group") {
+    const total = gender => rows.filter(row => row.gender === gender).reduce((sum, row) => sum + row.slots, 0);
+    return {scope: "age group", Male: {total: total("Male")}, Female: {total: total("Female")}};
+  }
+  const pick = gender => {
+    const row = rows.find(item => item.gender === gender);
+    return row ? {auto: row.automatic_slots, pool: row.performance_slots} : {auto: 0, pool: 0};
+  };
+  return {scope: "gender", Male: pick("Male"), Female: pick("Female")};
+}
+
+function slotBreakdownText(breakdown) {
+  if (!breakdown) return "—";
+  if (breakdown.scope === "age group") {
+    return `M ${breakdown.Male.total} · F ${breakdown.Female.total}<br><small>${breakdown.Male.total + breakdown.Female.total} age-group slots</small>`;
+  }
+  const total = ["Male", "Female"].reduce((sum, gender) => sum + breakdown[gender].auto + breakdown[gender].pool, 0);
+  return `M ${breakdown.Male.auto} + ${breakdown.Male.pool} · F ${breakdown.Female.auto} + ${breakdown.Female.pool}<br><small>${total} slots: AG winners + gender pool</small>`;
+}
+
+// Roll-down implied by World Championship start lists: estimated last-accepted
+// rank minus the allocated slots, i.e. slots declined or unclaimed.
+function rollDownEvidence(standard, mode) {
+  if (!standard?.available || !standard.estimatedCutoffUsed) return null;
+  const pool = standard.cutoffPool;
+  const rank = mode === "scan" ? pool?.cutoff_scan?.rank : null;
+  // Starters of legacy cycles were selected per age group, so their depth in a
+  // re-ranked gender pool is not a count of declined pool slots.
+  const comparable = !(pool?.slot_scope === "gender" && pool?.ranking_cycle !== pool?.kona_cycle && Number(pool?.kona_cycle) < 2026);
+  const passed = comparable && Number.isFinite(rank) && pool?.pool_slots > 0 ? Math.max(0, rank - pool.pool_slots) : null;
+  return {standard, passed, comparable, slots: pool?.pool_slots, scope: pool?.slot_scope};
+}
+
+function rollDownCell(evidence, reason) {
+  if (!evidence) return `<span title="${escapeHtml(reason || "No compatible evidence")}">—</span>`;
+  const passed = Number.isFinite(evidence.passed)
+    ? `<br><small>≈ ${evidence.passed} slot${evidence.passed === 1 ? "" : "s"} passed on (of ${evidence.slots} ${evidence.scope === "age group" ? "AG" : "pool"})</small>`
+    : evidence.comparable || evidence.standard.mode !== "scan" ? "" : "<br><small>age-group-era starters: no decline count</small>";
+  return `${escapeHtml(assumptionTime(evidence.standard))}${passed}`;
+}
+
+function renderTargetOverview() {
+  const container = document.getElementById("targetOverview");
+  if (!container) return;
+  const eventId = eventSelect.value;
+  if (!isQualifyingEvent(eventId)) {
+    container.innerHTML = `<p class="note">${escapeHtml(DATASETS[eventId].name)} is a World Championship, not a qualifying race. Select a qualifying race in the event selector above.</p>`;
+    return;
+  }
+  const gender = dashboardContext.gender;
+  const ageGroup = dashboardContext.ageGroup;
+  const division = divisionFor(gender, ageGroup);
+  const {profile, averageTime} = currentAbility(DATASETS[eventId].group, division);
+  const rows = allRaceYears(eventId).map(year => {
+    const strict = approachStandard(eventId, year, gender, ageGroup, qualificationSystem, "strict");
+    const get = mode => approachStandard(eventId, year, gender, ageGroup, qualificationSystem, mode);
+    const scan = rollDownEvidence(get("scan"), "scan");
+    const density = rollDownEvidence(get("density"), "density");
+    const reported = rollDownEvidence(get("reported"), "reported");
+    const factor = courseFactor(eventId, year);
+    const modified = isModifiedCourse(eventId, year);
+    const predicted = !modified && Number.isFinite(averageTime)
+      ? predictRaceYear(eventId, year, profile.used ? profile.splits : null, profile.transitionRatio, averageTime)?.total ?? null : null;
+    return {year, strict, scan, density, reported, factor, modified, predicted,
+      breakdown: genderSlotBreakdown(eventId, year, qualificationSystem),
+      standardTarget: Number.isFinite(strict?.needed) && factor ? strict.needed / factor : null,
+      unavailable: get("scan")?.unavailableReason};
+  });
+  const finite = values => values.filter(Number.isFinite);
+  const passedValues = finite(rows.map(row => row.scan?.passed));
+  const margins = finite(rows.map(row => Number.isFinite(row.predicted) && Number.isFinite(row.strict?.needed) ? row.strict.needed - row.predicted : null));
+  const body = rows.map(row => {
+    if (!row.strict) return `<tr><td>${yearCell(eventId, row.year)}</td><td colspan="10">No slot data for these rules</td></tr>`;
+    const strict = row.strict;
+    const ageGroupSlots = strict.scope === "age group"
+      ? `${strict.slots} ${escapeHtml(division)} slot${strict.slots === 1 ? "" : "s"}` : `${strict.qualifiers} strict qualifier${strict.qualifiers === 1 ? "" : "s"}`;
+    const margin = Number.isFinite(row.predicted) ? strict.needed - row.predicted : null;
+    return `<tr><td>${yearCell(eventId, row.year)}</td><td><small>${escapeHtml(strict.method || "")}</small></td><td>${slotBreakdownText(row.breakdown)}</td>`
+      + `<td>${ageGroupSlots}<br><small>of ${strict.finishers} finishers</small></td>`
+      + `<td><strong>${neededText(strict.needed)}</strong><br><small>${targetRouteText(strict)}</small></td>`
+      + `<td>${row.modified ? "Modified course" : neededText(row.standardTarget)}</td>`
+      + `<td>${rollDownCell(row.reported, "No documented report")}</td><td>${rollDownCell(row.scan, row.unavailable)}</td><td>${rollDownCell(row.density, row.unavailable)}</td>`
+      + `<td>${duration(row.predicted)}</td><td>${margin === null ? "—" : `${signedDuration(margin)}${margin >= 0 ? " ✓" : ""}`}</td></tr>`;
+  }).join("");
+  container.innerHTML = `<h2>Slots, roll-down and targets · ${escapeHtml(division)}</h2>
+    ${stepMetrics([
+      ["Median strict target (as raced)", neededText(lowerMedian(finite(rows.map(row => row.strict?.needed))))],
+      ["Median target on a standard course", neededText(lowerMedian(finite(rows.map(row => row.standardTarget))))],
+      ["Median slots passed on (estimated)", passedValues.length ? `≈ ${lowerMedian(passedValues)} in ${passedValues.length} yr` : "No evidence"],
+      ["Your median margin vs. strict target", margins.length ? signedDuration(lowerMedian(margins)) : "—"],
+    ])}
+    <div class="table-wrap" style="max-height:none"><table><thead><tr><th>Year</th><th>Rules</th><th title="Gender-pool years: automatic age-group winner slots + performance-pool slots. Legacy years: age-group slots per gender.">Slots (M · F)</th><th>${escapeHtml(division)} slots</th><th title="Finish time needed when every slot is accepted (no roll-down).">Strict target</th><th title="Strict target ÷ race-year course and conditions factor.">Strict target on a standard course</th><th>Reported last accepted</th><th title="Last World Championship starter before a run of unmatched athletes in the ranking.">Absence-scan estimate</th><th title="Rank where the density of World Championship starters drops.">Density estimate</th><th>Your predicted time</th><th>Your margin vs. strict</th></tr></thead><tbody>${body || '<tr><td colspan="11" class="empty">No race years are visible.</td></tr>'}</tbody></table></div>
+    <p class="note">"Slots passed on" = absence-scan last-accepted rank − allocated slots: places declined or unclaimed (e.g. already qualified, absent at the roll-down) that rolled to the next athlete. It is inferred from where World Championship starters (Kona, and Nice in 2023–2025) stop appearing in the ranking, not an observed count, and is only given where those starters were selected under the same ranking rules (performance-pool cycles, or legacy age groups in historical mode). The density estimate is shown as a time only; its breakpoint is too unstable for a count. Estimates are never faster than the strict target. Positive margin = your predicted time beats the strict target.</p>`;
 }
 
 function decorateDashboard() {
   updateDashboardScope();
+  renderYourTimeSummary();
+  renderRaceDifficulty();
+  renderTargetOverview();
   renderSelectedQualification();
   renderOddsApproaches();
   renderFinderApproaches();
@@ -401,6 +620,12 @@ function initializeDashboardUI() {
     .local-context-control {display:none !important}
     .personal-profile {padding:16px 0; border-block:1px solid var(--line); margin-top:24px}
     .personal-profile > summary {cursor:pointer; font-family:Georgia,"Times New Roman",serif; font-size:19px}
+    .step-intro {margin:0 0 18px !important; padding:11px 13px; color:#365048 !important; background:var(--accent-soft); border-left:3px solid var(--accent)}
+    .step-next {display:flex; justify-content:flex-end; margin-top:28px}
+    details.step-section {margin-top:24px; border-top:1px solid var(--line); padding-top:12px}
+    details.step-section > summary {cursor:pointer; font-family:Georgia,"Times New Roman",serif; font-size:19px; padding:4px 0}
+    details.step-section[open] > summary {margin-bottom:12px}
+    #targetOverview .metrics, #qtimeSummary .metrics {grid-template-columns:repeat(auto-fit, minmax(180px, 1fr))}
     .controls {border:0; border-bottom:1px solid var(--line); border-radius:0; background:transparent; padding:12px 0}
     .assumption-fields {margin-top:12px; border-top:1px solid var(--line); padding-top:12px}
     .assumption-fields .binary-label {display:flex; align-items:center; gap:6px; min-height:32px}
@@ -441,18 +666,81 @@ function initializeDashboardUI() {
   });
   const selectedSummary = document.createElement("section");
   selectedSummary.id = "selectedQualificationSummary";
-  document.getElementById("qualificationContent").prepend(selectedSummary);
+  const stepSection = (summary, ...children) => {
+    const section = document.createElement("details");
+    section.className = "step-section";
+    section.innerHTML = `<summary>${summary}</summary>`;
+    section.append(...children);
+    return section;
+  };
+  const embedPanel = panel => {
+    panel.classList.remove("tab-panel", "active");
+    panel.removeAttribute("role");
+    panel.removeAttribute("aria-labelledby");
+    return panel;
+  };
+  const createStepPanel = view => {
+    const panel = document.createElement("div");
+    panel.id = `${view}Panel`;
+    panel.className = "tab-panel";
+    panel.setAttribute("role", "tabpanel");
+    panel.setAttribute("aria-labelledby", `view-${view}`);
+    document.getElementById("qualificationPanel").before(panel);
+    return panel;
+  };
+  const finder = document.getElementById("easiestPanel");
+  finder.querySelector(":scope > p.note").remove();
+  // Step 1: your standard-course time from a typed time or past results.
+  const timePanel = createStepPanel("qtime");
+  timePanel.innerHTML = '<section id="qtimeSummary"></section>';
+  const finderControls = finder.querySelector(":scope > .controls");
+  [easiestDistance, easiestGender, easiestAgeGroup].forEach(control => control.closest("label").classList.add("local-context-control"));
+  easiestTime.closest("label").firstChild.textContent = "Finish time on a standard course (used without past results) ";
+  const personal = finder.querySelector(":scope > section");
+  personal.querySelector("h2").textContent = "Your past results (optional, recommended)";
+  const strength = document.getElementById("easiestProfileTitle").closest("section");
+  timePanel.append(finderControls, personal, strength);
+  // Step 2: race difficulty as raced and on a standard course.
+  createStepPanel("qdifficulty").innerHTML = '<section id="qdifficultyContent"></section>';
+  // Step 3: targets of the selected race with roll-down evidence.
+  const content = document.getElementById("qualificationContent");
+  const allocation = stepSection("Slot allocation detail, what-if slot overrides and target charts", ...content.children);
+  const overview = document.createElement("section");
+  overview.id = "targetOverview";
+  const konaPanel = embedPanel(document.getElementById("konaPanel"));
+  const evidence = stepSection("World Championship start-list evidence (Kona + Nice): who qualified where, and how far slots rolled down", konaPanel);
+  evidence.id = "wcEvidence";
+  content.append(overview, stepSection("Compare all five cutoff approaches by year", selectedSummary), allocation, evidence);
+  ["konaGender", "konaAgeGroup"].forEach(id => document.getElementById(id).closest("label").classList.add("local-context-control"));
+  // Step 4: where to qualify, with target hits and cross-race charts on demand.
+  const oddsPanel = embedPanel(document.getElementById("oddsPanel"));
+  oddsPanel.querySelector(":scope > .controls").classList.add("local-context-control");
+  oddsPanel.querySelector(":scope > p.note").textContent = "Uses your standard-course time from step 1, converted to each race-year with its course and conditions factor. A race-year counts as a hit when that time is at or below the time needed (age-group win or gender pool in performance-pool years; last allocated age-group slot in legacy years). Shortened race-years are excluded.";
   const oddsApproaches = ensureApproachPanel("oddsApproachComparison", "Historical target hits by cutoff approach", "oddsApproachChart", "Share of race years meeting your time");
-  document.getElementById("oddsPanel").append(oddsApproaches);
+  oddsPanel.append(oddsApproaches);
   const finderApproaches = ensureApproachPanel("finderApproachComparison", "Race Finder by cutoff approach", "finderApproachChart", "Target margin by race and year");
-  document.getElementById("easiestPanel").append(finderApproaches);
   const crossRacePanel = document.createElement("div");
   crossRacePanel.id = "crossracePanel";
-  crossRacePanel.className = "tab-panel";
-  crossRacePanel.setAttribute("role", "tabpanel");
-  crossRacePanel.setAttribute("aria-labelledby", "view-crossrace");
   crossRacePanel.innerHTML = '<p class="note">Strict allocation, qualification cutoffs, slot pressure and uncertainty compared across qualifying races. The selected qualification approach applies to all charts here.</p><section id="qualificationComparisons"><h2>Cross-race qualification</h2><div class="chart-grid"></div></section>';
-  document.getElementById("oddsPanel").before(crossRacePanel);
+  finder.append(
+    stepSection("Compare all five cutoff approaches per race-year", finderApproaches),
+    stepSection("How often your time would have qualified (historical target hits)", oddsPanel),
+    stepSection("Cross-race comparison charts", crossRacePanel),
+  );
+  for (const view of qualificationSteps) {
+    const panel = document.getElementById(`${view}Panel`);
+    const intro = document.createElement("p");
+    intro.className = "note step-intro";
+    intro.textContent = qualificationStepIntro[view];
+    panel.prepend(intro);
+    const next = qualificationStepNext[view];
+    if (next) {
+      const navigation = document.createElement("div");
+      navigation.className = "step-next";
+      navigation.innerHTML = `<button type="button" data-view="${next}">Next: ${dashboardViewLabels[next]} →</button>`;
+      panel.append(navigation);
+    }
+  }
   const comparisons = document.getElementById("qualificationComparisons");
   const comparisonGrid = comparisons.querySelector(".chart-grid");
   for (const id of ["compareImQualification", "compare703Qualification", "compareMeanQualification", "compareQualificationResidual", "compareSlotPressure", "compareCutoffPercentile", "compareQualificationUncertainty"]) {
@@ -487,17 +775,8 @@ function initializeDashboardUI() {
   experimentalDistance.closest("label").classList.add("local-context-control");
   document.getElementById("years").parentElement.classList.add("local-context-control");
   document.getElementById("compareYears").closest("fieldset").classList.add("local-context-control");
-  const finder = document.getElementById("easiestPanel");
-  const personal = finder.querySelector(":scope > section");
-  const strength = document.getElementById("easiestProfileTitle").closest("section");
   const ranking = document.getElementById("easiestRankingTitle").closest("section");
-  personal.before(finder.querySelector(":scope > .metrics"), ranking);
-  const profile = document.createElement("details");
-  profile.className = "personal-profile";
-  profile.innerHTML = "<summary>Past results & strength profile</summary>";
-  personal.before(profile);
-  profile.append(personal, strength);
-  profile.open = myResults.length > 0;
+  ranking.before(finder.querySelector(":scope > .metrics"));
   const allGroups = compareAgeGroups(Object.keys(DATASETS).filter(isQualifyingEvent));
   document.getElementById("contextAgeGroup").innerHTML = allGroups.map(value => `<option value="${value}">${value}</option>`).join("");
   document.getElementById("contextAgeGroup").value = dashboardContext.ageGroup;
@@ -523,8 +802,12 @@ function initializeDashboardUI() {
   [oddsDistance, oddsGender, oddsAgeGroup, oddsTimeBasis].forEach(control => control.addEventListener("change", renderOddsApproaches));
   oddsTime.addEventListener("input", renderOddsApproaches);
   [easiestDistance, easiestGender, easiestAgeGroup].forEach(control => control.addEventListener("change", renderFinderApproaches));
-  easiestTime.addEventListener("input", renderFinderApproaches);
+  easiestTime.addEventListener("input", () => {
+    renderFinderApproaches();
+    renderYourTimeSummary();
+  });
   document.addEventListener("click", event => {
+    if (event.target.closest("#qtimePanel button")) setTimeout(renderYourTimeSummary);
     const targetRace = event.target.closest("[data-target-race]");
     const evidence = event.target.closest("[data-evidence-race]");
     if (targetRace || evidence) {
@@ -535,11 +818,16 @@ function initializeDashboardUI() {
         syncDashboardContext("distance", dataset().group);
         activateDashboardView("qualification");
       } else {
+        eventSelect.value = evidence.dataset.evidenceRace;
+        syncDashboardContext("distance", dataset().group);
         document.getElementById("konaCycle").value = evidence.dataset.evidenceCycle || "2026";
         initializeKonaTrace();
         document.getElementById("konaRace").value = `${evidence.dataset.evidenceRace}|${evidence.dataset.evidenceYear}`;
-        activateDashboardView("kona");
+        activateDashboardView("qualification");
         renderKonaTrace();
+        const section = document.getElementById("wcEvidence");
+        section.open = true;
+        section.scrollIntoView({block: "start"});
       }
       return;
     }

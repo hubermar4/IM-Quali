@@ -23,7 +23,7 @@ cycle-specific evidence links, missing-gender warnings and mobile filter sizing.
 | --- | --- |
 | Race Explorer | Athlete search, time range, split statistics, profiles, pace/speed, CSV export, overall distributions and top cutoffs, participation/DNS/DNF and completion rates |
 | Compare Races | Participation/DNS/DNF, distance-specific finish/split distributions, age-group depth and split contribution |
-| Qualification | Race Targets, Race Finder, Historical Target Hits, a dedicated Cross-race Analysis subtab with qualification plots, scatter/regression/residuals, slot pressure, percentile and inter-year uncertainty; one shared historical/current approach selector, separate pool/legacy extra places, multi-approach comparisons, personal results and strength profile, multi-cycle Kona evidence and local attribution |
+| Qualification | Four steps: 1 Your time (typed or past results, strength profile), 2 Race difficulty (as raced vs. standard course, predicted time), 3 Qualification targets (slots, strict and standard-course targets, roll-down estimates and slots passed on; expandable five-approach comparison, slot what-ifs and Kona + Nice start-list evidence with local attribution), 4 Where to qualify (chance ranking; expandable approach comparison, historical target hits and cross-race plots: scatter/regression/residuals, slot pressure, percentile, inter-year uncertainty); one shared historical/current approach selector and separate pool/legacy extra places |
 | Course Analysis | Overall-split course/season/conditions factors, all-cohort adjusted field and qualification targets, GPX comparison, fixed athlete examples and head-to-head raw checks; only distance, top percentage and shared years are adjustable |
 
 ## Contracts

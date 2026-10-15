@@ -1,5 +1,49 @@
 # Code and data review
 
+## Review 2026-10-15b: Nice championship data and guided Qualification flow
+
+- `IM_Nice_WC` (men 2023/2025, women 2024) is a non-qualifying championship
+  event. Its start lists are merged with Kona per championship year, so
+  roll-down estimates now exist for the gender that raced in Nice (e.g.
+  Austria 2023/2025 men). Evidence labels read "WC" with venues per gender.
+- The Qualification workspace is a four-step flow: Your time, Race difficulty,
+  Qualification targets, Where to qualify. One standard-course time
+  (`currentAbility`) drives every step, including target hits, which no longer
+  has its own time input. Kona evidence, target hits, the five-approach tables
+  and cross-race charts became expandable sections.
+- Step 3 reports "slots passed on" from the absence scan only, and only when
+  the starters were selected under the same ranking rules. Legacy-era starters
+  re-ranked into a current gender pool, and density breakpoints, gave
+  implausible counts (e.g. 84 passed on of 16 pool slots).
+
+## Review 2026-10-15: Qualification workspace
+
+Fixed:
+
+- Current-mode density and scan estimates matched every historical race-year
+  against the Kona 2026 start list, so e.g. Austria 2017 M30-34 showed a
+  ~10:14 density target from athletes who qualified years later elsewhere.
+  Each race-year now uses the Kona start list of its own qualifying cycle
+  (Austria 2017 -> Kona 2017), re-ranked under current rules and the latest
+  allocation; overlapping cycles are resolved by the race-year's source cycle.
+- "Kona evidence" links in current mode pointed to a non-existent 2027 Kona
+  cycle; they now open the start-list cycle actually used.
+- The Historical Target Hits approach chart drew NaN paths for approaches with
+  no compatible years and one line per race and approach (up to 75); it now
+  draws one pooled line per approach.
+- The Target Hits note claimed extra roll-down places were applied to its
+  strict ranking; the note was also appended repeatedly on view changes.
+- Race Finder showed an always "0 estimated / N strict" coverage column and
+  its explanatory note was overwritten; replaced by a worst-best year margin
+  range and a single correct note.
+- Six stale UI tests (fixtures predating the counterfactual-cycle gating and
+  label changes) were updated; a regression test covers cycle selection.
+
+Added: per-approach summary across selected race-years (median, range,
+least-squares trend, latest), and per-year target route (AG winner, gender
+pool or AG place), qualifiers per finisher and roll-down sensitivity (+5 pool
+places or +1 age-group place) in Race Targets.
+
 ## Data update 2026-09-28: seven new full-distance races
 
 Added IRONMAN Calella-Barcelona, Lanzarote, Leeds, Portugal-Cascais,

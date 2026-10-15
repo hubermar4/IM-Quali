@@ -164,6 +164,7 @@ def build_kona_trace(kona_frame, calendar, events, read_results, event_names, ye
             "bib": text_value(row.get("Bib")), "name": text_value(row.get("Name")),
             "country": text_value(row.get("Country")), "gender": gender,
             "division": division, "status": status,
+            "venue": text_value(row.get("Venue")) or "Kona",
             "kona_time": seconds_value(row.get("Overall Time")), "matches": [],
         }
         starters.append(starter)
@@ -288,6 +289,7 @@ def build_kona_trace(kona_frame, calendar, events, read_results, event_names, ye
                 if not legacy and ranking_cycle == str(year) else {}
             pools.append({
                 **info, **{key: value for key, value in cohort.items() if key != "row_ids"},
+                "kona_cycle": str(year), "ranking_cycle": ranking_cycle,
                 "total_slots": total_slots, "pool_size": len(cohort["pool_times"]),
                 "reported_cutoff": reported.get("reported_cutoff"),
                 "reported_cutoff_precision": reported.get("reported_cutoff_precision"),
@@ -342,6 +344,10 @@ def build_kona_trace(kona_frame, calendar, events, read_results, event_names, ye
         all_row["cutoff_scan"] = single_row["cutoff_scan"] = scan
     return {
         "year": str(year), "starters": starters, "summaries": summaries,
+        "venues": {
+            gender: sorted({starter["venue"] for starter in starters if starter["gender"] == gender})
+            for gender in ("Male", "Female")
+        },
         "standard_cycle": ranking_cycle,
         "standards": {division: ratio for gender_standards in qualification_full.STANDARDS.get(ranking_cycle, ())
                   for division, ratio in gender_standards.items()},

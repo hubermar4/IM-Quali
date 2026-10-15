@@ -60,12 +60,24 @@ The dashboard preserves all original analyses in four workspaces:
   split profiles, pace/speed and filtered CSV export.
 - **Compare Races:** participation, distance-specific finish/split distributions,
   age-group depth and split contributions.
-- **Qualification:** Race Targets, Race Finder, Historical Target Hits, Kona
-  Evidence and a dedicated Cross-race Analysis subtab for qualification charts,
-  slot pressure, percentiles and regression/uncertainty diagnostics. Rankings
-  link to race targets and their cutoff evidence, with a return path. Past
-  results and strength profiles remain available in expandable detail; browser
-  storage keys are unchanged.
+- **Qualification:** a guided four-step flow.
+  1. *Your time* - one finish time on a standard course (average qualifying
+     race-year and conditions), typed or derived split by split from past
+     results, with the strength profile. Every later step uses it.
+  2. *Race difficulty* - each qualifying race as raced and converted to a
+     standard course: course effects (overall/swim/bike/run), race-year
+     factors, age-group medians and winners, and your predicted time.
+  3. *Qualification targets* - for the selected race: slots per year
+     (automatic + gender pool, or age-group slots), strict target as raced and
+     on a standard course, reported/scan/density roll-down estimates with the
+     estimated slots passed on, and your predicted margin. The five-approach
+     comparison, slot what-ifs and the World Championship start-list evidence
+     (Kona + Nice) are expandable sections.
+  4. *Where to qualify* - the race ranking by estimated chance, including the
+     target on a standard course; historical target hits and cross-race charts
+     are expandable sections.
+  Rankings link to race targets and their cutoff evidence, with a return
+  path. Browser storage keys are unchanged.
 - **Course Analysis:** course/season/conditions factors, adjusted targets,
   GPX cross-checks, repeat-athlete examples and head-to-head comparisons. Its
   only analysis inputs are distance, top-finisher percentage and the shared
@@ -143,6 +155,11 @@ option. Review source conflicts and missing coverage in `docs/code_review.md`.
   age group, including its winner and its recorded, published or explicitly
   reconstructed allocation. Current gender-pool estimates use the matching
   Kona-cycle standard to convert age-graded time, retaining the winner route.
+  In current mode, each race-year's density and scan estimates use the start
+  list of the Kona championship that race-year actually qualified for (for
+  example Austria 2017 is compared with the Kona 2017 starters), re-ranked
+  under the current rules and latest allocation. Race-years without a local
+  Kona start list for their cycle show no estimate.
   Legacy scans rank raw times within the selected age group and stop after
   three consecutive unmatched starters; gender-pool scans use fifteen.
   Reported cutoffs appear only when documented for the same scope and cycle.
@@ -170,12 +187,17 @@ finish-time distribution is displayed. Qualification plots and historical World
 Championship allocations live in **Qualification**, not Compare Races. Shared
 year buttons filter plots, regression fits and aggregated summaries.
 
-**Kona Evidence** supports available championship cycles 2017-2019 and 2022-2026,
-with a cycle selector and, for legacy rules, an age-group selector. There are no
-local 2020/2021 championship starter fields. The local Kona fields contain only
-women in 2023/2025 and only men in 2024; the corresponding Nice fields are needed
-for the other gender. Missing qualifying results or incompatible allocations
-remain explicit coverage gaps. Estimates do not extend to 70.3 races.
+**World Championship evidence** (step 3) supports available championship cycles
+2017-2019 and 2022-2026, with a cycle selector; legacy cycles use the shared
+age group. There are no local 2020/2021 championship starter fields. In
+2023-2025 the championship was split between Kona and Nice
+(`data/race_history/IM_Nice_WC`: men 2023/2025, women 2024); both start lists
+are combined per championship year, so both genders are covered from 2022 on.
+Nice also appears as a non-qualifying race in Race Explorer and Compare Races.
+Missing qualifying results or incompatible allocations remain explicit
+coverage gaps. Estimates do not extend to 70.3 races. "Slots passed on" in
+step 3 is the absence-scan rank minus allocated slots and is only reported when
+the starters were selected under the same ranking rules.
 
 The trace links age-group starters (including DNFs, excluding DNS and
 professionals) to the selected qualifying-cycle race list, including prior-year
