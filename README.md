@@ -5,16 +5,15 @@ normalization, and a generated interactive dashboard.
 
 ## Layout
 
-- `src/` - maintained Python source and embedded dashboard UI module
+- `src/` - maintained Python source; the dashboard is assembled from `dashboard_template.html`, `dashboard.css`, `dashboard_app.js` and `dashboard_ui.js`
 - `tests/` - qualification and GPX regression tests
 - `data/race_history/` - race result CSV files grouped by event
 - `data/gpx_tracks/` - bike-course GPX inputs
 - `data/cache/` - cached Coach Cox source pages
+- `data/reference/` - editable reference data (slots, events, standards, rule sets, modified courses, reported cut-offs)
 - `data/derived/` - reproducible extracted qualification datasets
-- `data/legacy/` - older Excel inputs retained for legacy analyses
 - `docs/` - qualification rules and source documentation
-- `dist/` - generated dashboard, data payload, reports, plots, and CSV files
-- `archive/` - duplicates and superseded generated artifacts retained for safety
+- `dist/` - generated dashboard, data payload, and reports
 
 ## Setup
 
@@ -49,8 +48,6 @@ py -3 -m http.server 8000 --directory dist
 ```
 
 Then open `http://localhost:8000/dashboard.html`.
-
-Use `--legacy-plots` to regenerate the older Excel-based plots and CSV exports.
 
 ## Dashboard workspaces
 
@@ -107,7 +104,7 @@ cycles cannot silently borrow evidence; modified-course comparisons remain
 excluded. Reported minute values and density estimates retain approximate
 presentation.
 
-The build embeds `src/dashboard_ui.js` into the HTML. No additional runtime
+The build inlines the dashboard template, CSS and JS files from `src/` into the HTML. No additional runtime
 script, framework or server is required beyond the existing sibling data file.
 
 ## Refresh historical sources

@@ -1,0 +1,123 @@
+{
+  "_comment": "Machine-readable mirror of docs/historical_qualification_rules.md; keep both in sync.",
+  "rule_sets": [
+    {
+      "id": "R1",
+      "name": "Age-group allocation, proportional",
+      "first_cycle": "2017",
+      "last_cycle": "2018",
+      "allocation": "age_group",
+      "integer_method": "largest_remainder",
+      "quota": "combined_total",
+      "min_per_age_group": 1
+    },
+    {
+      "id": "R2",
+      "name": "Age-group allocation, D'Hondt",
+      "first_cycle": "2018",
+      "last_cycle": "2022",
+      "allocation": "age_group",
+      "integer_method": "dhondt",
+      "quota": "combined_total",
+      "min_per_age_group": 1
+    },
+    {
+      "id": "R3",
+      "name": "Age-group allocation, gender-neutral quota, split championship",
+      "first_cycle": "2023",
+      "last_cycle": "2023",
+      "allocation": "age_group",
+      "integer_method": "dhondt",
+      "quota": "combined_total",
+      "min_per_age_group": 1
+    },
+    {
+      "id": "R4",
+      "name": "Age-group allocation, explicit gender quotas",
+      "first_cycle": "2024",
+      "last_cycle": "2025",
+      "allocation": "age_group",
+      "integer_method": "dhondt",
+      "quota": "male_female",
+      "min_per_age_group": 1
+    },
+    {
+      "id": "P1",
+      "name": "Performance pool, gender-split pools",
+      "first_cycle": "2026",
+      "last_cycle": "2027",
+      "allocation": "performance_pool",
+      "quota": "combined_total",
+      "pool_split": "eligible_starter_representation",
+      "ranking": "age_graded_standard"
+    }
+  ],
+  "cycles": [
+    {
+      "cycle": "2017",
+      "window": "28 Aug 2016-27 Aug 2017",
+      "championship": "Kona, Oct 2017",
+      "full_distance_rule_set": "R1"
+    },
+    {
+      "cycle": "2018",
+      "window": "27 Aug 2017-19 Aug 2018",
+      "championship": "Kona, Oct 2018",
+      "full_distance_rule_set": "R1->R2"
+    },
+    {
+      "cycle": "2019",
+      "window": "26 Aug 2018-18 Aug 2019",
+      "championship": "Kona, Oct 2019",
+      "full_distance_rule_set": "R2"
+    },
+    {
+      "cycle": "2020",
+      "window": "25 Aug 2019-Oct 2020",
+      "championship": "Cancelled (COVID-19)",
+      "full_distance_rule_set": "R2"
+    },
+    {
+      "cycle": "2021",
+      "window": "Sep 2020-22 Aug 2021",
+      "championship": "St George, 7 May 2022",
+      "full_distance_rule_set": "R2"
+    },
+    {
+      "cycle": "2022",
+      "window": "22 Aug 2021-21 Aug 2022",
+      "championship": "Kona, Oct 2022 (women 6 Oct, men 8 Oct)",
+      "full_distance_rule_set": "R2"
+    },
+    {
+      "cycle": "2023",
+      "window": "Aug 2022-20 Aug 2023",
+      "championship": "Nice 10 Sep (men), Kona 14 Oct (women)",
+      "full_distance_rule_set": "R3"
+    },
+    {
+      "cycle": "2024",
+      "window": "20 Aug 2023-18 Aug 2024",
+      "championship": "Nice (women), Kona (men)",
+      "full_distance_rule_set": "R4"
+    },
+    {
+      "cycle": "2025",
+      "window": "17 Aug 2024-17 Aug 2025",
+      "championship": "Nice (men), Kona (women)",
+      "full_distance_rule_set": "R4"
+    },
+    {
+      "cycle": "2026",
+      "window": "16 Aug 2025-16 Aug 2026",
+      "championship": "Kona, Oct 2026",
+      "full_distance_rule_set": "P1"
+    },
+    {
+      "cycle": "2027",
+      "window": "from 22 Aug 2026",
+      "championship": "Kona 2027",
+      "full_distance_rule_set": "P1"
+    }
+  ]
+}

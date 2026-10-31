@@ -1,45 +1,15 @@
 import math
 import pandas as pd
-import matplotlib.pyplot as plt
+import reference_data
 from datetime import timedelta
-from pathlib import Path
 import warnings
 
-from project_paths import DIST_DIR, LEGACY_DATA_DIR, ensure_output_directories
+_CONSTANTS = reference_data.qualification_constants()
+TOTAL_SLOTS = _CONSTANTS['full_total_slots']
+NON_AGE_GROUP_DIVISIONS = set(_CONSTANTS['non_age_group_divisions'])
 
-
-excel_file = LEGACY_DATA_DIR / 'ironmanaustria_updatedRules_2.xlsx'
-OUTPUT_IMAGE = DIST_DIR / 'qualification_summary_table.png'
-OUTPUT_TARGETS = DIST_DIR / 'qualification_time_targets.csv'
-TOTAL_SLOTS = 40
-NON_AGE_GROUP_DIVISIONS = {
-    'MPRO', 'FPRO', 'MPC', 'FPC', 'MPC/ID', 'FPC/ID',
-    'MHC', 'FHC', 'MST', 'FST', 'MGUIDE', 'FGUIDE',
-}
-
-# --- Kona ratios ---
-known_men_ratios = {
-    'M18-24': 0.9698, 'M25-29': 0.9921, 'M30-34': 1.0,
-    'M35-39': 0.9895, 'M40-44': 0.9683, 'M45-49': 0.9401,
-    'M50-54': 0.9002, 'M55-59': 0.8667, 'M60-64': 0.8262,
-    'M65-69': 0.7552, 'M70-74': 0.6876, 'M75-79': 0.6768,
-    'M80-84': 0.5555, 'M85-89': 0.5416,
-}
-
-known_women_ratios = {
-    'F18-24': 0.9543, 'F25-29': 0.9982, 'F30-34': 1.0,
-    'F35-39': 0.9877, 'F40-44': 0.9699, 'F45-49': 0.9470,
-    'F50-54': 0.9051, 'F55-59': 0.8665, 'F60-64': 0.8041,
-    'F65-69': 0.7606, 'F70-74': 0.7173, 'F75-79': 0.6150,
-}
-
-# Kona Standard by qualifying cycle (ironman.com/about/age-group-qualification);
-# the published 2026 and 2027 tables are identical.
-STANDARDS = {
-    '2026': (known_men_ratios, known_women_ratios),
-    '2027': (known_men_ratios, known_women_ratios),
-}
-CURRENT_CYCLE = '2027'
+# Kona Standard by qualifying cycle (data/reference/age_group_standards.json).
+CURRENT_CYCLE, STANDARDS = reference_data.standards('full')
 
 
 def get_ratio(gender, division, cycle=CURRENT_CYCLE):
@@ -124,11 +94,6 @@ def get_cutoff(pool, slots, extra=0):
     if idx >= len(pool) or idx < 0:
         return None
     return pool.iloc[idx]
-
-
-def process_year(sheet_name):
-    df = pd.read_excel(excel_file, sheet_name=sheet_name)
-    return process_dataframe(sheet_name, df)
 
 
 def process_dataframe(year, df, total_slots=TOTAL_SLOTS, cycle=CURRENT_CYCLE):
@@ -328,99 +293,3 @@ def build_target_rows(results):
                     'Representation basis': 'Eligible age-group starters',
                 })
     return rows
-
-
-if __name__ == "__main__":
-    ensure_output_directories()
-    xls = pd.ExcelFile(excel_file)
-    sheets = [s for s in xls.sheet_names if s not in ['Kona Standards', 'Overview', 'Sub 9']]
-
-    results = [process_year(s) for s in sorted(sheets)]
-    results = [r for r in results if r]
-
-    target_rows = build_target_rows(results)
-    pd.DataFrame(target_rows).to_csv(OUTPUT_TARGETS, index=False)
-
-    table_rows = []
-    for r in results:
-        table_rows.append([
-            r['year'],
-            r['male_finishers'],
-            r['female_finishers'],
-            r['male_auto'],
-            r['female_auto'],
-            r['male_slots'],
-            r['female_slots'],
-            r['male_cut'] or '-',
-            r['female_cut'] or '-',
-            r['male_cut_15'] or '-',
-            r['male_cut_30'] or '-'
-        ])
-
-    # --- Color normalization ---
-    def collect_times(key):
-        vals = []
-        for r in results:
-            if r.get(key):
-                vals.append(parse_time(r[key]))
-        return vals
-
-    male_times = collect_times('male_cut') + collect_times('male_cut_15') + collect_times('male_cut_30')
-    female_times = collect_times('female_cut')
-
-    min_m, max_m = (min(male_times), max(male_times)) if male_times else (None, None)
-    min_f, max_f = (min(female_times), max(female_times)) if female_times else (None, None)
-
-    cell_colors = []
-    for r in results:
-        row_colors = ['white'] * 11
-
-        def color(val, min_t, max_t, cmap):
-            if not val or not min_t or not max_t or min_t == max_t:
-                return 'white'
-            t = parse_time(val)
-            norm = (max_t - t) / (max_t - min_t)
-            return plt.get_cmap(cmap)(0.6 + 0.3 * norm)
-
-        row_colors[7] = color(r['male_cut'], min_m, max_m, 'Blues')
-        row_colors[8] = color(r['female_cut'], min_f, max_f, 'Oranges')
-        row_colors[9] = color(r['male_cut_15'], min_m, max_m, 'Blues')
-        row_colors[10] = color(r['male_cut_30'], min_m, max_m, 'Blues')
-
-        cell_colors.append(row_colors)
-
-    fig, ax = plt.subplots(figsize=(18, 0.6 * len(table_rows) + 1.5))
-    ax.axis('off')
-
-    columns = [
-        'Year',
-        'M finishers*', 'F finishers*',
-        'M auto', 'F auto',
-        'M perf slots', 'F perf slots',
-        'M AG cutoff', 'F AG cutoff',
-        'M rank +15', 'M rank +30'
-    ]
-
-    table = ax.table(
-        cellText=table_rows,
-        colLabels=columns,
-        cellLoc='center',
-        loc='center',
-        cellColours=cell_colors
-    )
-
-    table.auto_set_font_size(False)
-    table.set_fontsize(9)
-    table.scale(1, 1.5)
-
-    ax.set_title(
-        f'Strict IM Qualification Estimate — Total slots: {TOTAL_SLOTS}\n'
-        '*Finisher representation used because starter counts are unavailable',
-        pad=20,
-    )
-
-    plt.tight_layout()
-    plt.savefig(OUTPUT_IMAGE, dpi=150, bbox_inches='tight')
-
-    print(f'Saved summary table to {OUTPUT_IMAGE}')
-    print(f'Saved age-group finish-time targets to {OUTPUT_TARGETS}')

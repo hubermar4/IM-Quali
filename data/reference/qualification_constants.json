@@ -1,0 +1,24 @@
+{
+  "full_total_slots": 40,
+  "half_total_slots": 50,
+  "half_slots_per_gender": 25,
+  "non_age_group_divisions": [
+    "FGUIDE",
+    "FHC",
+    "FPC",
+    "FPC/ID",
+    "FPRO",
+    "FST",
+    "MGUIDE",
+    "MHC",
+    "MPC",
+    "MPC/ID",
+    "MPRO",
+    "MST"
+  ],
+  "legacy_rank_offsets": [
+    1,
+    2,
+    5
+  ]
+}

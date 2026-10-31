@@ -17,11 +17,6 @@ def main() -> None:
     parser.add_argument(
         "--with-tests", action="store_true", help="Run the regression suite first."
     )
-    parser.add_argument(
-        "--legacy-plots",
-        action="store_true",
-        help="Also regenerate older Excel-based plots and CSV exports.",
-    )
     arguments = parser.parse_args()
 
     if arguments.with_tests:
@@ -33,15 +28,6 @@ def main() -> None:
 
     run("build_dashboard.py")
     run("build_gpx_report.py")
-
-    if arguments.legacy_plots:
-        for script in (
-            "qualification_full.py",
-            "qualification_703.py",
-            "overall_time_analysis.py",
-            "split_time_analysis.py",
-        ):
-            run(script)
 
     print(f"Build complete: {ROOT / 'dist'}")
 

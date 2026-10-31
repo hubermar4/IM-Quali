@@ -25,7 +25,7 @@ GPX_TRACK_DIR = (
     else PROJECT_ROOT / "GPX Tracks"
 )
 DERIVED_DATA_DIR = DATA_DIR / "derived"
-LEGACY_DATA_DIR = DATA_DIR / "legacy"
+REFERENCE_DATA_DIR = DATA_DIR / "reference"
 COACHCOX_ALLOCATION_FILE = (
     DERIVED_DATA_DIR / "coachcox_age_group_allocations.json"
     if (DERIVED_DATA_DIR / "coachcox_age_group_allocations.json").exists()
@@ -36,4 +36,3 @@ COACHCOX_ALLOCATION_FILE = (
 def ensure_output_directories() -> None:
     DIST_DIR.mkdir(parents=True, exist_ok=True)
     DERIVED_DATA_DIR.mkdir(parents=True, exist_ok=True)
-    LEGACY_DATA_DIR.mkdir(parents=True, exist_ok=True)

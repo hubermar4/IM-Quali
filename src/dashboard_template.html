@@ -1,0 +1,545 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>IRONMAN Split Explorer</title>
+  <style>
+@@STYLE@@
+  </style>
+</head>
+<body>
+  <header>
+    <div class="header-inner">
+      <h1 id="eventTitle">IRONMAN Split Explorer</h1>
+      <p id="eventSubtitle" class="subtitle"></p>
+    </div>
+  </header>
+  <main>
+    <div class="event-control">
+      <label>Event <select id="eventSelect"></select></label>
+    </div>
+    <nav class="tabs" aria-label="Dashboard views" role="tablist">
+      <button class="tab-button active" data-tab="splits" role="tab" aria-selected="true" aria-controls="splitsPanel">Split Explorer</button>
+      <button class="tab-button" data-tab="qualification" role="tab" aria-selected="false" aria-controls="qualificationPanel">Qualification</button>
+      <button class="tab-button" data-tab="odds" role="tab" aria-selected="false" aria-controls="oddsPanel">Can I Qualify?</button>
+      <button class="tab-button" data-tab="easiest" role="tab" aria-selected="false" aria-controls="easiestPanel">Where to Qualify</button>
+      <button class="tab-button" data-tab="overall" role="tab" aria-selected="false" aria-controls="overallPanel">Overall Times</button>
+      <button class="tab-button" data-tab="statistics" role="tab" aria-selected="false" aria-controls="statisticsPanel">Race Statistics</button>
+      <button class="tab-button" data-tab="compare" role="tab" aria-selected="false" aria-controls="comparePanel">Compare Races</button>
+      <button class="tab-button" data-tab="kona" role="tab" aria-selected="false" aria-controls="konaPanel">Kona Trace</button>
+      <button class="tab-button" data-tab="experimental" role="tab" aria-selected="false" aria-controls="experimentalPanel">Experimental</button>
+    </nav>
+
+    <div id="splitsPanel" class="tab-panel active">
+      <div class="controls">
+        <label>From (HH:MM:SS) <input id="fromTime" class="duration-input" type="text" inputmode="numeric" pattern="[0-9]+:[0-5][0-9]:[0-5][0-9]" value="04:25:00" aria-label="Minimum finishing time"></label>
+        <label>To (HH:MM:SS) <input id="toTime" class="duration-input" type="text" inputmode="numeric" pattern="[0-9]+:[0-5][0-9]:[0-5][0-9]" value="04:30:00" aria-label="Maximum finishing time"></label>
+        <label>Find athlete <input id="search" type="search" placeholder="Name, country, division"></label>
+        <div><label>Years</label><div id="years" class="years"></div></div>
+        <button id="download">Export filtered CSV ↓</button>
+      </div>
+
+      <div class="metrics">
+        <div class="metric"><span>Finishers</span><strong id="finisherCount">0</strong></div>
+        <div class="metric"><span>Selected range</span><strong id="rangeLabel">—</strong></div>
+        <div class="metric"><span>Median finish</span><strong id="medianFinish">—</strong></div>
+      </div>
+
+      <section>
+        <h2>Split-time summary</h2>
+        <div class="table-wrap" style="max-height:none">
+          <table class="summary"><thead><tr><th>Split</th><th>Average time (pace / speed) ± time σ</th><th>Minimum time (pace / speed)</th><th>Maximum time (pace / speed)</th></tr></thead><tbody id="summaryBody"></tbody></table>
+        </div>
+        <p id="distanceNote" class="note"></p>
+      </section>
+
+      <section>
+        <h2>Matching finishers</h2>
+        <div class="legend"><span><i class="swim"></i>Swim</span><span><i class="t1"></i>T1</span><span><i class="bike"></i>Bike</span><span><i class="t2"></i>T2</span><span><i class="run"></i>Run</span></div>
+        <div class="table-wrap">
+          <table><thead><tr><th>Year</th><th>Athlete</th><th>Division</th><th>Overall</th><th>Split profile</th><th>Swim</th><th>T1</th><th>Bike</th><th>T2</th><th>Run</th></tr></thead><tbody id="finishersBody"></tbody></table>
+        </div>
+      </section>
+    </div>
+
+    <div id="qualificationPanel" class="tab-panel">
+      <p id="qualificationNote" class="note"></p>
+      <div id="qualificationContent">
+      <div class="metrics">
+        <div class="metric"><span id="qualificationSlotsLabel">Official slot allocation</span><strong id="qualificationSlotsMetric">—</strong></div>
+        <div class="metric"><span id="qualificationSelectedTotalLabel">Selected total (auto + performance pool)</span><strong id="qualificationSelectedTotalMetric">—</strong></div>
+        <div class="metric"><span id="qualificationCheckLabel">Model vs. official qualifiers</span><strong id="qualificationCheckMetric">—</strong></div>
+      </div>
+      <div class="controls">
+        <label>Gender <select id="qualificationGender"><option value="Male">Men</option><option value="Female">Women</option></select></label>
+        <label>Displayed age group <select id="qualificationAgeGroup"></select></label>
+        <label>Performance-pool declines (X) <input id="qualificationDeclines" type="number" min="0" step="1" value="0"></label>
+        <label class="historical-rule-only">Age-group declines (Y) <input id="qualificationLegacyDeclines" type="number" min="0" step="1" value="0"></label>
+        <label class="current-rule-only">Male age-group winners (auto) <input id="maleAutoSlots" type="number" readonly tabindex="-1"></label>
+        <label class="current-rule-only">Female age-group winners (auto) <input id="femaleAutoSlots" type="number" readonly tabindex="-1"></label>
+        <label class="current-rule-only">Male performance-pool slots <input id="maleSlots" type="number" min="0" step="1"></label>
+        <label class="current-rule-only">Female performance-pool slots <input id="femaleSlots" type="number" min="0" step="1"></label>
+        <button id="resetSlots" class="current-rule-only" type="button">Reset defaults</button>
+      </div>
+      <section>
+        <h2 id="qualificationTableTitle">Qualification estimate by year</h2>
+        <div class="table-wrap" style="max-height:none">
+          <table><thead id="qualificationHead"></thead><tbody id="qualificationBody"></tbody></table>
+        </div>
+      </section>
+      <div class="chart-grid">
+        <div class="chart-panel wide"><h2 id="qualificationChartTitle">Qualification cutoff trends</h2><svg id="qualificationChart" class="chart" viewBox="0 0 1000 330"></svg></div>
+        <div class="chart-panel wide"><h2 id="ageGroupTargetChartTitle">Time needed to qualify by age group</h2><p class="note">Finish at or below this raw time to qualify: by winning the age group or, in performance-pool years, by making the gender pool (whichever is slower). Gaps mean the age group had no finisher or no slot data.</p><svg id="ageGroupTargetChart" class="chart" viewBox="0 0 1000 350"></svg></div>
+      </div>
+      </div>
+    </div>
+
+    <div id="oddsPanel" class="tab-panel">
+      <p class="note">Checks a finish time against every qualifying race-year in the dataset. With the average-course basis, your time is converted to each race-year's course and conditions using the factors from the Experimental tab, so a 10:00 athlete is expected to need longer in Nice than in Copenhagen. A time qualifies when it is at or below the time needed: the age-group winner's time or the performance-pool equivalent in performance-pool years, and the last allocated age-group slot in legacy years. Inserting your result is assumed not to change the slot split. Shortened race-years are excluded.</p>
+      <div class="controls">
+        <label>Distance <select id="oddsDistance"><option value="im">IRONMAN 140.6</option><option value="703">IRONMAN 70.3</option></select></label>
+        <label>Gender <select id="oddsGender"><option value="Male">Men</option><option value="Female">Women</option></select></label>
+        <label>Age group <select id="oddsAgeGroup"></select></label>
+        <label>Your finish time (HH:MM:SS) <input id="oddsTime" class="duration-input" type="text" inputmode="numeric" pattern="[0-9]+:[0-5][0-9]:[0-5][0-9]" value="10:00:00" aria-label="Your finish time"></label>
+        <label>Time basis <select id="oddsTimeBasis"><option value="average">Average course (adjusted per race-year)</option><option value="raw">Same time at every race</option></select></label>
+        <label>Extra roll-down places <input id="oddsDeclines" type="number" min="0" step="1" value="0"></label>
+      </div>
+      <div class="metrics">
+        <div class="metric"><span>Race-years where your time qualifies</span><strong id="oddsQualifiedMetric">—</strong></div>
+        <div class="metric"><span>Easiest race for this age group</span><strong id="oddsBestMetric">—</strong></div>
+        <div class="metric"><span id="oddsMedianNeededLabel">Time that qualified in half of race-years</span><strong id="oddsMedianNeededMetric">—</strong></div>
+      </div>
+      <section>
+        <h2 id="oddsRankingTitle">Ease-of-qualification ranking</h2>
+        <div class="table-wrap" style="max-height:none">
+          <table><thead id="oddsRankingHead"></thead><tbody id="oddsRankingBody"></tbody></table>
+        </div>
+        <p id="oddsRankingNote" class="note"></p>
+      </section>
+      <div class="chart-grid">
+        <div class="chart-panel wide">
+          <h2>Share of race-years in which a finish time qualifies</h2>
+          <p class="note">Each line is one race. A point at 75% means that finish time was fast enough in three of every four race-years; the dashed line marks your time. With the average-course basis the x-axis is time on an average course.</p>
+          <svg id="oddsProbabilityChart" class="chart" viewBox="0 0 1000 420"></svg>
+        </div>
+        <div class="chart-panel wide">
+          <h2 id="oddsRateTitle">Qualifiers per 100 starters by age group</h2>
+          <p class="note">Median across race-years of age-group qualifiers divided by eligible age-group starters. Current mode uses projected no-decline qualifiers; historical mode uses the official allocation where the results flag it.</p>
+          <svg id="oddsRateChart" class="chart" viewBox="0 0 1000 380"></svg>
+        </div>
+      </div>
+      <section>
+        <h2>Race-year detail</h2>
+        <div class="table-wrap">
+          <table><thead id="oddsDetailHead"></thead><tbody id="oddsDetailBody"></tbody></table>
+        </div>
+      </section>
+    </div>
+
+    <div id="easiestPanel" class="tab-panel">
+      <p class="note">Ranks every qualifying race by your chance to qualify. For each past race-year the dashboard predicts your time on that course and in that year's conditions, compares it with the time needed in your age group (slots, rules, and field of that race-year), and turns the gap into a probability. Add your past results for a split-by-split prediction that rewards courses matching your strengths; without results, enter a finish time on an average course.</p>
+      <div class="controls">
+        <label>Distance <select id="easiestDistance"><option value="im">IRONMAN 140.6</option><option value="703">IRONMAN 70.3</option></select></label>
+        <label>Gender <select id="easiestGender"><option value="Male">Men</option><option value="Female">Women</option></select></label>
+        <label>Age group at your next race <select id="easiestAgeGroup"></select></label>
+        <label>Finish time on an average course <input id="easiestTime" class="duration-input" type="text" inputmode="numeric" pattern="[0-9]+:[0-5][0-9]:[0-5][0-9]" value="10:30:00" aria-label="Finish time on an average course"></label>
+        <label>Extra roll-down places <input id="easiestDeclines" type="number" min="0" step="1" value="0"></label>
+      </div>
+      <section>
+        <h2>Your past results (optional)</h2>
+        <p class="note">Search your name in the results database and click Add, or enter a result manually. Your results stay in this browser only.</p>
+        <div class="controls">
+          <label>Find my results <input id="easiestSearch" type="search" placeholder="Your name"></label>
+        </div>
+        <div class="table-wrap" style="max-height:280px">
+          <table><thead id="easiestSearchHead"></thead><tbody id="easiestSearchBody"></tbody></table>
+        </div>
+        <div class="controls" style="margin-top:14px">
+          <label>Race <select id="easiestManualRace"></select></label>
+          <label>Year <select id="easiestManualYear"></select></label>
+          <label>Age group then <select id="easiestManualAgeGroup"></select></label>
+          <label>Swim <input id="easiestManualSwim" class="duration-input" type="text" placeholder="01:10:00"></label>
+          <label>T1 <input id="easiestManualT1" class="duration-input" type="text" placeholder="00:05:00"></label>
+          <label>Bike <input id="easiestManualBike" class="duration-input" type="text" placeholder="05:30:00"></label>
+          <label>T2 <input id="easiestManualT2" class="duration-input" type="text" placeholder="00:04:00"></label>
+          <label>Run <input id="easiestManualRun" class="duration-input" type="text" placeholder="03:45:00"></label>
+          <button id="easiestManualAdd" type="button">Add result</button>
+        </div>
+        <p id="easiestManualNote" class="note"></p>
+        <div class="table-wrap" style="max-height:none">
+          <table><thead id="easiestResultsHead"></thead><tbody id="easiestResultsBody"></tbody></table>
+        </div>
+        <p id="easiestResultsNote" class="note"></p>
+      </section>
+      <section>
+        <h2 id="easiestProfileTitle">Your strength profile</h2>
+        <div class="table-wrap" style="max-height:none">
+          <table><thead id="easiestProfileHead"></thead><tbody id="easiestProfileBody"></tbody></table>
+        </div>
+        <p id="easiestProfileNote" class="note"></p>
+      </section>
+      <div class="metrics" style="margin-top:28px">
+        <div class="metric"><span>Best race for you</span><strong id="easiestBestMetric">—</strong></div>
+        <div class="metric"><span>Estimated chance there</span><strong id="easiestChanceMetric">—</strong></div>
+        <div class="metric"><span>Your finish time on an average course</span><strong id="easiestAbilityMetric">—</strong></div>
+      </div>
+      <section>
+        <h2 id="easiestRankingTitle">Where you qualify most easily</h2>
+        <div class="table-wrap" style="max-height:none">
+          <table><thead id="easiestRankingHead"></thead><tbody id="easiestRankingBody"></tbody></table>
+        </div>
+        <p id="easiestRankingNote" class="note"></p>
+      </section>
+      <div class="chart-grid">
+        <div class="chart-panel wide">
+          <h2>Your margin in every past race-year</h2>
+          <p class="note">Time needed minus your expected time. Points above zero meet the selected target, not proof of slot acceptance. Races are ordered by estimated chance; race-years where any finish met the target are not drawn.</p>
+          <svg id="easiestMarginChart" class="chart" viewBox="0 0 1000 420"></svg>
+        </div>
+      </div>
+      <section>
+        <div class="chart-heading">
+          <h2>Race-year detail</h2>
+          <div class="chart-controls"><label>Race <select id="easiestDetailRace"></select></label></div>
+        </div>
+        <div class="table-wrap" style="max-height:none">
+          <table><thead id="easiestDetailHead"></thead><tbody id="easiestDetailBody"></tbody></table>
+        </div>
+      </section>
+      <section>
+        <h2>How the ranking is calculated</h2>
+        <details class="method">
+          <summary>Formulas and assumptions</summary>
+          <ol>
+            <li><strong>Your ability per split on an average course.</strong> <span class="formula">a<sub>s</sub> = geometric mean over your results of t<sub>s</sub> × A(age group then) ÷ A(age group next race) ÷ f<sub>s</sub>(race-year)</span> for s = swim, bike, run. f<sub>s</sub> are the split factors from the Experimental tab; A is the age-grading standard, so results from a younger age group are slowed down to your next age group. Transitions: your T1 + T2 relative to that race-year's median, averaged over your results.</li>
+            <li><strong>Expected time at race-year r.</strong> <span class="formula">T<sub>r</sub> = a<sub>swim</sub>·f<sub>swim</sub>(r) + a<sub>bike</sub>·f<sub>bike</sub>(r) + a<sub>run</sub>·f<sub>run</sub>(r) + transition ratio × median T1+T2(r)</span>. A strong cyclist loses less time than the field on a hard bike course, so hilly courses rank higher for them. Without results: T<sub>r</sub> = your average-course time × f<sub>overall</sub>(r).</li>
+            <li><strong>Time needed N<sub>r</sub></strong> in your age group: the slower of the age-group winner and the performance-pool equivalent, or the last allocated age-group slot in legacy years. Manual extra places extend the pool or legacy age-group allocation separately. Reported, density and absence-scan modes use only compatible scope and cycle evidence; legacy scans rank raw age-group times with three consecutive absences, while gender-pool scans use fifteen. Extra places are not added to evidence estimates. Uncovered editions are excluded unless strict fallback is explicitly enabled. Changed allocation, modified course or a different cycle cannot silently borrow a cutoff.</li>
+            <li><strong>Chance in race-year r.</strong> <span class="formula">p<sub>r</sub> = Φ( ln(N<sub>r</sub> ÷ T<sub>r</sub>) ÷ σ )</span>. Φ is the standard normal distribution; σ is how much one athlete's result varies from race to race after course and conditions are removed (the residual SD of the course model), widened by √(1 + 1/n) when your ability comes from n results.</li>
+            <li><strong>Chance at a race</strong> = average of p<sub>r</sub> over its past race-years; every race-year is one equally likely scenario for field strength, slots, and weather. Races with few race-years are less certain.</li>
+            <li><strong>Course fit</strong> = your expected time ÷ the expected time of same-level athletes (median splits of your age group at your average-course level) on this course, relative to an average course. Negative means the course suits your profile.</li>
+          </ol>
+          <p class="note">Pool estimates are unverified Kona-starter matching heuristics, not observed acceptance or predicted future cutoffs. They apply only to covered full-distance editions, not all historical years or 70.3 races. Not modelled: ceremony attendance, prior qualification, future changes in field size or allocation, and whether your results were your first IRONMAN (about 1% slower).</p>
+        </details>
+      </section>
+    </div>
+
+    <div id="overallPanel" class="tab-panel">
+      <section>
+        <h2>Overall finishing-time statistics</h2>
+        <p class="note">Age-group metrics exclude professional (MPRO/FPRO) athletes; pro columns show their fastest times separately.</p>
+        <div class="table-wrap" style="max-height:none">
+          <table><thead><tr><th>Year</th><th>Finishers</th><th>Mean</th><th>Median</th><th>Top 20% cutoff</th><th>Top 100 cutoff</th><th>Top 50 cutoff</th><th>Top 20 cutoff</th><th>Top 10 Pro (M)</th><th>Top 10 Pro (F)</th></tr></thead><tbody id="overallBody"></tbody></table>
+        </div>
+      </section>
+      <div class="chart-grid">
+        <div class="chart-panel wide">
+          <h2>Finishing-time density by year</h2>
+          <p class="note">Each row is a normalized density on the same time axis; the dot marks the median. Density height compares distribution shape, not finisher count.</p>
+          <svg id="densityChart" class="chart" viewBox="0 0 1000 500"></svg>
+        </div>
+        <div class="chart-panel"><h2>Mean and median</h2><svg id="averageChart" class="chart" viewBox="0 0 600 330"></svg></div>
+        <div class="chart-panel"><h2>Top finisher cutoffs</h2><svg id="cutoffChart" class="chart" viewBox="0 0 600 330"></svg></div>
+      </div>
+    </div>
+
+    <div id="statisticsPanel" class="tab-panel">
+      <section>
+        <h2>Race statistics by year</h2>
+        <p class="note">Starters exclude no-shows (DNS). Completion rate is finishers divided by starters.</p>
+        <div class="table-wrap" style="max-height:none">
+          <table><thead><tr><th>Year</th><th>Registered</th><th>Starters</th><th>Finishers</th><th>DNS</th><th>DNF</th><th>DQ</th><th>Completion</th><th>Male finishers</th><th>Female finishers</th><th>% Male</th><th>% Female</th><th>Pro finishers</th><th>Avg finish</th><th>Median finish</th></tr></thead><tbody id="statisticsBody"></tbody></table>
+        </div>
+      </section>
+      <div class="chart-grid">
+        <div class="chart-panel wide"><h2>Finishers, DNS and DNF by year</h2><svg id="statusChart" class="chart" viewBox="0 0 1000 330"></svg></div>
+        <div class="chart-panel"><h2>Male vs. female finishers</h2><svg id="genderChart" class="chart" viewBox="0 0 600 330"></svg></div>
+        <div class="chart-panel"><h2>Completion rate</h2><svg id="completionChart" class="chart" viewBox="0 0 600 330"></svg></div>
+      </div>
+    </div>
+
+    <div id="comparePanel" class="tab-panel">
+      <p class="note">Races are grouped by distance: full-distance IRONMAN (Kona-qualifying) events are compared with each other, and 70.3 events are compared separately. Shortened or modified race-years are left out of cross-race comparisons: <span class="modified-course-list"></span>.</p>
+      <fieldset class="controls">
+        <legend>Visible years</legend>
+        <div id="compareYears" class="years"></div>
+      </fieldset>
+      <div class="chart-grid">
+        <div class="chart-panel wide">
+          <div class="chart-heading">
+            <h2>Field size and historical slots</h2>
+            <div class="chart-controls">
+              <label>Distance <select id="compareStatisticsDistance"><option value="im">IRONMAN 140.6</option><option value="703">IRONMAN 70.3</option></select></label>
+            </div>
+          </div>
+          <p class="note">Finishers include professionals. Slot totals are the race-year's historical World Championship allocation, not the current-rule projection; unavailable allocations are omitted.</p>
+          <h2>Total finishers</h2>
+          <svg id="compareFinishers" class="chart" viewBox="0 0 1000 360"></svg>
+          <h2>DNS rate (% of registered athletes)</h2>
+          <svg id="compareDnsRatio" class="chart" viewBox="0 0 1000 360"></svg>
+          <h2>DNF rate (% of starters)</h2>
+          <svg id="compareDnfRatio" class="chart" viewBox="0 0 1000 360"></svg>
+          <h2>Total World Championship slots</h2>
+          <svg id="compareTotalSlots" class="chart" viewBox="0 0 1000 360"></svg>
+        </div>
+        <div class="chart-panel wide">
+          <h2>IRONMAN (140.6) finish-time distribution</h2>
+          <p class="note">Age-group finishers only (pros excluded); each point is one year's mean finish time for that race.</p>
+          <svg id="compareImDistribution" class="chart" viewBox="0 0 1000 360"></svg>
+        </div>
+        <div class="chart-panel wide">
+          <h2>70.3 finish-time distribution</h2>
+          <p class="note">Age-group finishers only (pros excluded); each point is one year's mean finish time for that race.</p>
+          <svg id="compare703Distribution" class="chart" viewBox="0 0 1000 360"></svg>
+        </div>
+        <div class="chart-panel wide">
+          <div class="chart-heading">
+            <h2>Split-time distribution by race</h2>
+            <div class="chart-controls">
+              <label>Distance <select id="compareSplitDistance"><option value="im">IRONMAN 140.6</option><option value="703">IRONMAN 70.3</option></select></label>
+            </div>
+          </div>
+          <p class="note">Same view as the finish-time distribution, one chart per leg: age-group finishers only (pros excluded); each point is one year's mean split time for that race. Transitions exclude zero-duration placeholders. Hover a point for pace or speed, median, and athlete count. Raw times: course length, course profile, and conditions are all included.</p>
+          <h3 class="chart-subtitle">Swim</h3>
+          <svg id="compareSplitSwim" class="chart" viewBox="0 0 1000 340"></svg>
+          <h3 class="chart-subtitle">T1</h3>
+          <svg id="compareSplitT1" class="chart" viewBox="0 0 1000 340"></svg>
+          <h3 class="chart-subtitle">Bike</h3>
+          <svg id="compareSplitBike" class="chart" viewBox="0 0 1000 340"></svg>
+          <h3 class="chart-subtitle">T2</h3>
+          <svg id="compareSplitT2" class="chart" viewBox="0 0 1000 340"></svg>
+          <h3 class="chart-subtitle">Run</h3>
+          <svg id="compareSplitRun" class="chart" viewBox="0 0 1000 340"></svg>
+        </div>
+      </div>
+      <div class="chart-grid">
+        <div class="chart-panel wide">
+          <div class="chart-heading">
+            <h2>IRONMAN World Championship — raw qualifying time by race</h2>
+            <div class="chart-controls">
+              <label>Age group <select id="compareImAgeGroup"></select></label>
+              <label>Gender <select id="compareImGender"><option value="Male">Men</option><option value="Female">Women</option></select></label>
+            </div>
+          </div>
+          <p class="note">Qualifying races only, using each race's slot allocation for the selected system. Each point is one race-year's raw time needed (age-group win or performance pool, whichever is slower; last allocated slot in legacy years). Strict estimate: all age-group winners accept, no roll-down. Shortened race-years are excluded.</p>
+          <svg id="compareImQualification" class="chart" viewBox="0 0 1000 360"></svg>
+        </div>
+        <div class="chart-panel wide">
+          <div class="chart-heading">
+            <h2>70.3 World Championship — raw qualifying time by race</h2>
+            <div class="chart-controls">
+              <label>Age group <select id="compare703AgeGroup"></select></label>
+              <label>Gender <select id="compare703Gender"><option value="Male">Men</option><option value="Female">Women</option></select></label>
+            </div>
+          </div>
+          <p class="note">Uses each race's 70.3 World Championship slot allocation for the selected system. Each point is one race-year's raw time needed (age-group win or performance pool, whichever is slower; last allocated slot in legacy years). Strict estimate: all age-group winners accept, no roll-down.</p>
+          <svg id="compare703Qualification" class="chart" viewBox="0 0 1000 360"></svg>
+        </div>
+      </div>
+      <div class="chart-grid">
+        <div class="chart-panel wide">
+          <div class="chart-heading">
+            <h2>Mean finish time vs. raw qualifying time</h2>
+            <div class="chart-controls">
+              <label>Distance <select id="compareScatterDistance"><option value="im">IRONMAN 140.6</option><option value="703">IRONMAN 70.3</option></select></label>
+              <label>Age group <select id="compareScatterAgeGroup"></select></label>
+              <label>Gender <select id="compareScatterGender"><option value="Male">Men</option><option value="Female">Women</option></select></label>
+            </div>
+          </div>
+          <p class="note">Each point is one race-year using age-group finishers only. Click or focus a race name in the legend to hide or show its trace; the global fit and residual chart update to use visible races only. Colored lines are per-race fits. Kona and shortened or modified race-years are excluded: <span class="modified-course-list"></span>.</p>
+          <svg id="compareMeanQualification" class="chart" viewBox="0 0 1000 430"></svg>
+        </div>
+        <div class="chart-panel wide">
+          <h2>Qualification-time difference from global fit</h2>
+          <p class="note">Uses the same selected race-years as the plot above. Positive means a later, easier cutoff than the global fit predicts; negative means an earlier, harder cutoff.</p>
+          <svg id="compareQualificationResidual" class="chart" viewBox="0 0 1000 390"></svg>
+        </div>
+      </div>
+      <div class="chart-grid">
+        <div class="chart-panel wide">
+          <h2>Slot pressure per 100 eligible starters</h2>
+          <p class="note">Uses the distance, system, age-group, and gender selected above. Performance-pool years use gender-wide slots and starters; legacy years use the selected age group's slots and starters. Higher values indicate more slot availability.</p>
+          <svg id="compareSlotPressure" class="chart" viewBox="0 0 1000 390"></svg>
+        </div>
+        <div class="chart-panel wide">
+          <h2>Qualifying cutoff percentile within the selected age group</h2>
+          <p class="note">Percentage of split-complete finishers in the selected gender and age group at or faster than the estimated cutoff. Lower values indicate a more selective cutoff.</p>
+          <svg id="compareCutoffPercentile" class="chart" viewBox="0 0 1000 390"></svg>
+        </div>
+        <div class="chart-panel wide">
+          <h2>Selected age-group depth</h2>
+          <p class="note">Number of split-complete finishers in the selected gender and age group for each race-year.</p>
+          <svg id="compareAgeGroupDepth" class="chart" viewBox="0 0 1000 390"></svg>
+        </div>
+        <div class="chart-panel wide">
+          <h2>Mean split contribution by race</h2>
+          <p class="note">Across all available years for the selected gender and age group. Segment shares are calculated from swim, transitions, bike, and run times and normalized to 100%.</p>
+          <svg id="compareSplitContribution" class="chart" viewBox="0 0 1000 430"></svg>
+        </div>
+        <div class="chart-panel wide">
+          <h2>Qualification cutoff uncertainty across years</h2>
+          <p class="note">Median raw cutoff with interquartile range and minimum/maximum whiskers for the selected system, gender, and age group. Wider ranges mean less stable historical qualification targets.</p>
+          <svg id="compareQualificationUncertainty" class="chart" viewBox="0 0 1000 430"></svg>
+        </div>
+      </div>
+    </div>
+
+    <div id="konaPanel" class="tab-panel">
+      <h2>Kona 2026 starters and qualifying results</h2>
+      <p class="note">Age-group starters include Kona FIN, DNF, DQ and NC results, but exclude DNS and professionals. Matches use normalized full name, gender, country and compatible age groups. A matching finish is a possible qualifying result, not proof that the slot was accepted at that race.</p>
+      <div class="controls" style="margin-top:18px">
+        <label>Championship cycle <select id="konaCycle"><option value="2026">2026</option></select></label>
+        <label>Gender <select id="konaGender"><option value="Male">Men</option><option value="Female">Women</option></select></label>
+        <label hidden>Age group <select id="konaAgeGroup"><option value="30-34">30-34</option></select></label>
+        <label>Summary evidence <select id="konaEvidence"><option value="reviewed">Reviewed sources</option><option value="single">Unverified: single</option><option value="all">Unverified: all</option></select></label>
+        <label>Qualifying race <select id="konaRace"><option value="">All available races</option></select></label>
+      </div>
+      <div class="metrics">
+        <div class="metric"><span>Championship age-group starters</span><strong id="konaStarterCount">0</strong></div>
+        <div class="metric"><span>Matched to qualifying results</span><strong id="konaMatchedCount">0</strong></div>
+        <div class="metric"><span>No match in available results</span><strong id="konaUnmatchedCount">0</strong></div>
+      </div>
+      <p id="konaCoverageNote" class="note"></p>
+      <section>
+        <h2>Pool cutoffs and conditional skipped places</h2>
+        <p class="note">Two exploratory estimates are shown separately. The density estimate detects a drop in Kona matches; its minute-rounded range combines model support and match-selection sensitivity, not a confidence interval. The absence scan reports the last matched athlete before the first consecutive unmatched run after the fixed allocation: three within legacy age-group rankings, fifteen within gender performance pools. Missing matches, other qualifying races and special-entry routes can bias both methods. Neither proves acceptance or counts declined slots. Frankfurt 2026 uses a modified course, not a comparable full-distance finish time.</p>
+        <p class="note">Reported last-accepted pool times are source-labeled references, separate from athlete matches. A time reported to the minute does not establish an exact pool rank. A match-based cutoff is unknown until a slot source is attributed. A single local finish does not establish that source: athletes may qualify elsewhere or enter through Legacy or another special route. Reviewed attributions are assumptions, not verified acceptances. Unverified modes show candidate maxima, not qualifying cutoffs. Skipped places = max(0, deepest attributed pool rank minus initial pool slots); prior qualification, automatic-slot roll-downs, reallocations and Kona DNS mean this is not a count of people who declined.</p>
+        <div class="table-wrap" style="max-height:none">
+          <table><thead><tr><th>Qualifying race</th><th>Year</th><th>Total slots</th><th>Initial pool slots</th><th>Matched starters</th><th>Attributed starters</th><th>Selected pool rank</th><th>Strict cutoff</th><th>Manual extra-place target</th><th>Reported last accepted</th><th>Density estimate</th><th>Absence scan</th><th>Modelled roll-down (%)</th><th>Selected time</th><th>Conditional skipped places</th><th>Selected starter</th></tr></thead><tbody id="konaSummaryBody"></tbody></table>
+        </div>
+      </section>
+      <div class="chart-grid">
+        <div class="chart-panel wide">
+          <h2>Strict, reported and match-based cutoff times</h2>
+          <svg id="konaCutoffChart" class="chart" viewBox="0 0 1000 420"></svg>
+        </div>
+        <div class="chart-panel wide">
+          <h2>Conditional skipped places by qualifying race</h2>
+          <svg id="konaSkippedChart" class="chart" viewBox="0 0 1000 380"></svg>
+        </div>
+        <div class="chart-panel wide">
+          <h2>Absence-scan roll-down assumption</h2>
+          <p class="note">The scan uses 3 consecutive absences within a legacy age group and 15 within a gender performance pool. This model-derived rate is an assumption, not an observed count or rate of declined slots.</p>
+          <svg id="konaRollDownChart" class="chart" viewBox="0 0 1000 380"></svg>
+        </div>
+      </div>
+      <section>
+        <h2>Starter-to-result matches</h2>
+        <div class="controls">
+          <label>Find athlete <input id="konaSearch" type="search" placeholder="Name, country or age group"></label>
+          <label>Match status <select id="konaMatchStatus"><option value="all">All starters</option><option value="matched">With a result match</option><option value="unmatched">Without a result match</option></select></label>
+        </div>
+        <p id="konaMatchNote" class="note"></p>
+        <div class="table-wrap">
+          <table><thead><tr><th>Championship starter</th><th>Country</th><th>Championship age group</th><th>Championship status</th><th>Possible qualifying race</th><th>Year</th><th>Race age group</th><th>Finish time</th><th>Pool rank</th><th>Age-graded time</th><th>Initial entitlement</th><th>Candidate races</th><th>Slot source (review)</th></tr></thead><tbody id="konaMatchesBody"></tbody></table>
+        </div>
+      </section>
+      <section>
+        <details class="method">
+          <summary>2026-cycle race coverage</summary>
+          <div class="table-wrap"><table><thead><tr><th>Qualifying race</th><th>Year</th><th>Date</th><th>Local results</th></tr></thead><tbody id="konaCoverageBody"></tbody></table></div>
+        </details>
+      </section>
+    </div>
+
+    <div id="experimentalPanel" class="tab-panel">
+      <p class="note">Course and race-day conditions are estimated from athletes who finished several race-years of the same distance: each athlete is compared only with themselves, so ability cancels out. +5% means the same athlete was 5% slower than in the average qualifying race-year. Times are age-graded with the current Kona or 70.3 Standard first so that ageing between races does not make later years look harder, and the model removes the typical gain of returning athletes over their first appearance (<span id="experimentalReturningNote">—</span>). Shortened race-years are excluded. 70.3 factors compare Zell am See editions with each other only.</p>
+      <div class="controls">
+        <label>Distance <select id="experimentalDistance"><option value="im">IRONMAN 140.6</option><option value="703">IRONMAN 70.3</option></select></label>
+        <label>Top finishers (%) <input id="experimentalPercentile" type="number" min="0.1" max="100" step="0.1" value="20"></label>
+      </div>
+      <section>
+        <h2>How the factors are calculated</h2>
+        <details class="method" open>
+          <summary>Method, formulas, and fit statistics for the selected distance</summary>
+          <ol>
+            <li><strong>Match athletes across race-years.</strong> Identity = name tokens (accents removed, lower case, sorted, so "Anna Berg" = "BERG, Anna") + gender + country. An identity is dropped if it appears twice in one race-year (two different people), if its age groups imply inconsistent birth years, or if it has fewer than two race-years. Pros, results without an age group, and shortened or modified race-years are left out.</li>
+            <li><strong>Age-grade.</strong> <span class="formula">t′ = t × A(gender, age group)</span> with A from the <span id="experimentalStandardName">—</span>, so ageing from M40-44 to M45-49 between two races is not mistaken for a harder course.</li>
+            <li><strong>Fit, for each split separately:</strong>
+              <div class="formula">ln t′<sub>i,r</sub> = a<sub>i</sub> + c<sub>r</sub> + b · R<sub>i,r</sub> + ε<sub>i,r</sub></div>
+              a<sub>i</sub> = ability of athlete i; c<sub>r</sub> = effect of race-year r; R<sub>i,r</sub> = 1 if this is not the athlete's first race in the data, else 0; b = returning-athlete effect; ε = everything else. Least squares, solved by alternating means until nothing changes: a<sub>i</sub> = mean of (ln t′ − c<sub>r</sub> − b·R) over athlete i's races; c<sub>r</sub> = mean of (ln t′ − a<sub>i</sub> − b·R) over race-year r's athletes; b = mean of (ln t′ − a<sub>i</sub> − c<sub>r</sub>) over returning results. Because every athlete is compared only with themselves, ability cancels out.</li>
+            <li><strong>Remove outliers and refit.</strong> Results with |ε| above 4 × 1.4826 × median |ε| (a robust 4-σ limit: mechanicals, walked marathons, wrong matches) are dropped.</li>
+            <li><strong>Normalise.</strong> c<sub>r</sub> is shifted to average 0 over qualifying race-years. Race-year factor <span class="formula">f<sub>r</sub> = e<sup>c<sub>r</sub></sup></span>; f = 1.05 is shown as +5%.</li>
+            <li><strong>Split into course, season, and conditions.</strong> <span class="formula">ln f<sub>race,year</sub> = C<sub>race</sub> + S<sub>year</sub> + conditions</span>, fitted the same way over all race-years; seasons average 0 over qualifying race-years.</li>
+            <li><strong>Use.</strong> Course-adjusted time = t ÷ f<sub>r</sub>. A time T on an average course is expected to be T × f<sub>r</sub> at race-year r.</li>
+          </ol>
+          <div class="table-wrap" style="max-height:none">
+            <table><thead><tr><th>Split</th><th>Matched athletes</th><th>Results used</th><th>Outliers removed</th><th title="Results further than this from the athlete's own level are dropped.">Outlier limit</th><th title="Typical deviation of a single result from ability × race-year factor.">Residual SD</th><th title="Returning results relative to the athlete's first appearance.">Returning effect b</th></tr></thead><tbody id="experimentalFitBody"></tbody></table>
+          </div>
+        </details>
+      </section>
+      <section>
+        <h2>Course and conditions by race</h2>
+        <div class="table-wrap" style="max-height:none">
+          <table><thead id="experimentalFactorHead"></thead><tbody id="experimentalFactorBody"></tbody></table>
+        </div>
+        <p id="experimentalFactorNote" class="note"></p>
+      </section>
+      <section>
+        <div class="chart-heading">
+          <h2 id="experimentalBreakdownTitle">Factor breakdown by race-year</h2>
+        </div>
+        <div class="table-wrap" style="max-height:none">
+          <table><thead id="experimentalBreakdownHead"></thead><tbody id="experimentalBreakdownBody"></tbody></table>
+        </div>
+        <p id="experimentalBreakdownNote" class="note"></p>
+      </section>
+      <div class="chart-grid">
+        <div class="chart-panel wide">
+          <h2 id="experimentalFactorTitle">Race-year difficulty</h2>
+          <p class="note">Each point is one race-year relative to the average qualifying race-year: course, season and race-day conditions combined. Points above zero were slower for the same athletes. This is the factor used for course-adjusted times.</p>
+          <svg id="experimentalFactorChart" class="chart" viewBox="0 0 1000 400"></svg>
+        </div>
+        <div class="chart-panel wide">
+          <h2>Season effect across all races</h2>
+          <p class="note">Common year-to-year change for the same athletes after removing each course's own difficulty. It captures whatever made a whole season faster or slower, for example equipment progress on the bike.</p>
+          <svg id="experimentalSeasonChart" class="chart" viewBox="0 0 1000 340"></svg>
+        </div>
+        <div class="chart-panel wide">
+          <h2 id="experimentalFieldTitle">Course-adjusted all-cohort field strength</h2>
+          <p class="note">Top-percentage cutoff across both genders and all age groups, divided by the race-year's overall factor. Lower means a stronger field.</p>
+          <svg id="experimentalFieldChart" class="chart" viewBox="0 0 1000 400"></svg>
+        </div>
+        <div class="chart-panel wide">
+          <div class="chart-heading">
+            <h2 id="experimentalNeededTitle">Course-adjusted time needed to qualify</h2>
+          </div>
+          <p class="note">Median qualification target across available genders and age groups, divided by the race-year's overall factor. Uses the selected qualification system and shared race-year filter.</p>
+          <svg id="experimentalNeededChart" class="chart" viewBox="0 0 1000 400"></svg>
+        </div>
+        <div class="chart-panel wide">
+          <h2>Bike course check: GPX model vs. athlete data</h2>
+          <p class="note">Bike difficulty relative to the mean of the compared courses. The GPX model uses one track per race and a 200 W reference rider; the athlete data is the season-adjusted bike course effect over all race-years. The model gets the order of courses mostly right but compresses the differences: it rides faster than a typical age-grouper, and it ignores road surface, wind, corners, and drafting. Noisy elevation also inflates flat coastal courses. The Lanzarote track ends about 175 m above its start (altimeter drift on the final descent), which changes its factor by about 0.4%.</p>
+          <svg id="experimentalGpxChart" class="chart" viewBox="0 0 1000 380"></svg>
+        </div>
+      </div>
+      <section>
+        <h2>Worked example: athletes who raced several race-years</h2>
+        <div class="table-wrap">
+          <table><thead id="experimentalAthleteHead"></thead><tbody id="experimentalAthleteBody"></tbody></table>
+        </div>
+        <p id="experimentalAthleteNote" class="note"></p>
+      </section>
+      <section>
+        <div class="chart-heading">
+          <h2>Raw-data check: athletes who raced both courses</h2>
+        </div>
+        <div class="metrics">
+          <div class="metric"><span>Athletes who raced both</span><strong id="experimentalPairCount">—</strong></div>
+          <div class="metric"><span>Same athletes at B vs. A (data)</span><strong id="experimentalPairObserved">—</strong></div>
+          <div class="metric"><span>Model factors for the same race-years</span><strong id="experimentalPairModel">—</strong></div>
+        </div>
+        <div class="table-wrap">
+          <table><thead id="experimentalPairHead"></thead><tbody id="experimentalPairBody"></tbody></table>
+        </div>
+        <p id="experimentalPairNote" class="note"></p>
+      </section>
+    </div>
+  </main>
+
+  <script src="dashboard_data.js"></script>
+  <script>
+@@SCRIPT@@
+  </script>
+</body>
+</html>

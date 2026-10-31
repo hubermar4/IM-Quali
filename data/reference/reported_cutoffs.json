@@ -1,0 +1,36 @@
+{
+  "_comment": "Externally reported performance-pool cut-off times (evidence, not derived).",
+  "cutoffs": [
+    {
+      "cycle": "2026",
+      "event": "im_austria",
+      "race_year": "2026",
+      "gender": "Male",
+      "reported_cutoff": 32280,
+      "reported_cutoff_precision": "minute",
+      "reported_cutoff_source": "User report: last accepted men's performance-pool time"
+    },
+    {
+      "cycle": "2026",
+      "event": "im_hamburg",
+      "race_year": "2026",
+      "gender": "Male",
+      "reported_cutoff": 32624,
+      "reported_cutoff_precision": "second",
+      "reported_cutoff_source": "tri-mag.de, 9 June 2026",
+      "reported_cutoff_url": "https://tri-mag.de/szene/von-hamburg-nach-hawaii-so-schnell-musste-man-fuer-die-kona-quali-sein/",
+      "reported_cutoff_athlete": "Dusan Milosevic"
+    },
+    {
+      "cycle": "2026",
+      "event": "im_hamburg",
+      "race_year": "2026",
+      "gender": "Female",
+      "reported_cutoff": 39872,
+      "reported_cutoff_precision": "second",
+      "reported_cutoff_source": "tri-mag.de, 9 June 2026",
+      "reported_cutoff_url": "https://tri-mag.de/szene/von-hamburg-nach-hawaii-so-schnell-musste-man-fuer-die-kona-quali-sein/",
+      "reported_cutoff_athlete": "Janine Schulschek"
+    }
+  ]
+}

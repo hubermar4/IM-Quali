@@ -1,0 +1,79 @@
+{
+  "_comment": "Per-event registry keyed by the race_history folder name.",
+  "events": {
+    "im_austria": {
+      "coachcox_name": "Ironman Austria",
+      "gpx_file": "austria.gpx"
+    },
+    "im_barcelona": {
+      "coachcox_name": "Ironman Barcelona",
+      "display_name": "IRONMAN Calella-Barcelona",
+      "gpx_file": "barcelona.gpx"
+    },
+    "im_france": {
+      "coachcox_name": "Ironman France",
+      "gpx_file": "france.gpx"
+    },
+    "im_frankfurt": {
+      "coachcox_name": "Ironman Frankfurt"
+    },
+    "im_hamburg": {
+      "coachcox_name": "Ironman Hamburg",
+      "gpx_file": "hamburg.gpx"
+    },
+    "im_italy": {
+      "coachcox_name": "Ironman Italy",
+      "gpx_file": "italy.gpx"
+    },
+    "im_kalmar": {
+      "coachcox_name": "Ironman Sweden",
+      "display_name": "IRONMAN Kalmar",
+      "gpx_file": "kalmar.gpx"
+    },
+    "im_kopenhagen": {
+      "coachcox_name": "Ironman Copenhagen",
+      "display_name": "IRONMAN Copenhagen",
+      "gpx_file": "copenhagen.gpx"
+    },
+    "im_lanzarote": {
+      "coachcox_name": "Ironman Lanzarote",
+      "gpx_file": "lanzarote.gpx"
+    },
+    "im_leeds": {
+      "coachcox_name": "Ironman Leeds",
+      "gpx_file": "leeds.gpx"
+    },
+    "im_nice_wc": {
+      "display_name": "IRONMAN World Championship Nice"
+    },
+    "im_portugal": {
+      "coachcox_name": "Ironman Portugal - Cascais",
+      "display_name": "IRONMAN Portugal-Cascais",
+      "gpx_file": "portugal.gpx"
+    },
+    "im_tallinn": {
+      "coachcox_name": "Ironman Tallinn",
+      "display_name": "IRONMAN Tallinn",
+      "gpx_file": "tallinn.gpx"
+    },
+    "im_thun": {
+      "coachcox_name": "Ironman Switzerland",
+      "display_name": "IRONMAN Switzerland Thun",
+      "gpx_file": "thun.gpx"
+    },
+    "im_vitoria": {
+      "coachcox_name": "Ironman Vitoria-Gasteiz",
+      "display_name": "IRONMAN Vitoria-Gasteiz",
+      "gpx_file": "vitoria.gpx"
+    },
+    "im_wales": {
+      "coachcox_name": "Ironman Wales",
+      "gpx_file": "wales.gpx"
+    }
+  },
+  "non_qualifying_events": [
+    "im_kona",
+    "im_nice_wc"
+  ],
+  "nice_championship_event": "im_nice_wc"
+}

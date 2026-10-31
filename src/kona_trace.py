@@ -5,31 +5,11 @@ from collections import Counter, defaultdict
 import pandas as pd
 
 import qualification_full
+import reference_data
 from course_difficulty import identity_key
 
 
-HAMBURG_CUTOFF_URL = "https://tri-mag.de/szene/von-hamburg-nach-hawaii-so-schnell-musste-man-fuer-die-kona-quali-sein/"
-REPORTED_POOL_CUTOFFS = {
-    ("2026", "im_austria", "2026", "Male"): {
-        "reported_cutoff": 8 * 3600 + 58 * 60,
-        "reported_cutoff_precision": "minute",
-        "reported_cutoff_source": "User report: last accepted men's performance-pool time",
-    },
-    ("2026", "im_hamburg", "2026", "Male"): {
-        "reported_cutoff": 9 * 3600 + 3 * 60 + 44,
-        "reported_cutoff_precision": "second",
-        "reported_cutoff_source": "tri-mag.de, 9 June 2026",
-        "reported_cutoff_url": HAMBURG_CUTOFF_URL,
-        "reported_cutoff_athlete": "Dusan Milosevic",
-    },
-    ("2026", "im_hamburg", "2026", "Female"): {
-        "reported_cutoff": 11 * 3600 + 4 * 60 + 32,
-        "reported_cutoff_precision": "second",
-        "reported_cutoff_source": "tri-mag.de, 9 June 2026",
-        "reported_cutoff_url": HAMBURG_CUTOFF_URL,
-        "reported_cutoff_athlete": "Janine Schulschek",
-    },
-}
+REPORTED_POOL_CUTOFFS = reference_data.reported_pool_cutoffs()
 
 
 def text_value(value):

@@ -1,0 +1,134 @@
+{
+  "_comment": "Latest published allocation per race and its qualifying cycle (ironman.com).",
+  "source_urls": {
+    "kona_2026": "https://www.ironman.com/races/im-world-championship-kona/qualifying-events-2026",
+    "kona_2027": "https://www.ironman.com/races/im-world-championship-kona/qualifying-events-2027",
+    "703_2026": "https://www.ironman.com/races/im703-world-championship-2026/qualifying-events-2026",
+    "703_2027": "https://www.ironman.com/races/im703-world-championship-2027/qualifying-events-2027"
+  },
+  "default_total_slots": 40,
+  "default_slots_per_gender": 25,
+  "im": {
+    "im_austria": {
+      "slots": 40,
+      "cycle": "2026"
+    },
+    "im_barcelona": {
+      "slots": 55,
+      "cycle": "2027"
+    },
+    "im_france": {
+      "slots": 40,
+      "cycle": "2026"
+    },
+    "im_frankfurt": {
+      "slots": 60,
+      "cycle": "2026"
+    },
+    "im_hamburg": {
+      "slots": 60,
+      "cycle": "2026"
+    },
+    "im_italy": {
+      "slots": 55,
+      "cycle": "2027"
+    },
+    "im_kalmar": {
+      "slots": 40,
+      "cycle": "2026"
+    },
+    "im_kopenhagen": {
+      "slots": 40,
+      "cycle": "2026"
+    },
+    "im_lanzarote": {
+      "slots": 40,
+      "cycle": "2026"
+    },
+    "im_leeds": {
+      "slots": 40,
+      "cycle": "2026"
+    },
+    "im_portugal": {
+      "slots": 55,
+      "cycle": "2027"
+    },
+    "im_tallinn": {
+      "slots": 45,
+      "cycle": "2027"
+    },
+    "im_thun": {
+      "slots": 40,
+      "cycle": "2026"
+    },
+    "im_vitoria": {
+      "slots": 40,
+      "cycle": "2026"
+    },
+    "im_wales": {
+      "slots": 50,
+      "cycle": "2027"
+    }
+  },
+  "703": {
+    "im_703_zellamsee": {
+      "male": 25,
+      "female": 25,
+      "cycle": "2027"
+    }
+  },
+  "official_sources": [
+    {
+      "event": "im_tallinn",
+      "year": "2026",
+      "method": "performance",
+      "male": null,
+      "female": null,
+      "combined": 45,
+      "total": 45,
+      "cycles": [
+        "2027"
+      ],
+      "source_url": "https://www.ironman.com/races/im-world-championship-kona/qualifying-events-2027"
+    },
+    {
+      "event": "im_wales",
+      "year": "2026",
+      "method": "performance",
+      "male": null,
+      "female": null,
+      "combined": 50,
+      "total": 50,
+      "cycles": [
+        "2027"
+      ],
+      "source_url": "https://www.ironman.com/races/im-world-championship-kona/qualifying-events-2027"
+    },
+    {
+      "event": "im_703_zellamsee",
+      "year": "2025",
+      "method": "performance",
+      "male": 35,
+      "female": 35,
+      "combined": null,
+      "total": 70,
+      "cycles": [
+        "2026"
+      ],
+      "source_url": "https://www.ironman.com/races/im703-world-championship-2026/qualifying-events-2026"
+    },
+    {
+      "event": "im_703_zellamsee",
+      "year": "2026",
+      "method": "performance",
+      "male": 25,
+      "female": 25,
+      "combined": null,
+      "total": 50,
+      "cycles": [
+        "2027"
+      ],
+      "source_url": "https://www.ironman.com/races/im703-world-championship-2027/qualifying-events-2027"
+    }
+  ]
+}

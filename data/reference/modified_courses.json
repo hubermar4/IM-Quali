@@ -1,0 +1,35 @@
+{
+  "_comment": "Race-years with shortened or cancelled legs; excluded from course factors.",
+  "modified_courses": [
+    {
+      "event": "im_barcelona",
+      "year": "2021",
+      "description": "swim cancelled for most athletes"
+    },
+    {
+      "event": "im_france",
+      "year": "2019",
+      "description": "shortened run"
+    },
+    {
+      "event": "im_frankfurt",
+      "year": "2026",
+      "description": "shortened bike and run"
+    },
+    {
+      "event": "im_leeds",
+      "year": "2026",
+      "description": "swim cancelled"
+    },
+    {
+      "event": "im_thun",
+      "year": "2021",
+      "description": "shortened swim"
+    },
+    {
+      "event": "im_vitoria",
+      "year": "2021",
+      "description": "swim cancelled"
+    }
+  ]
+}

@@ -368,7 +368,7 @@ class KonaTraceTests(unittest.TestCase):
                 self.assertEqual(row["reported_cutoff"], seconds)
                 self.assertEqual(row["reported_cutoff_precision"], "second")
                 self.assertEqual(row["reported_cutoff_athlete"], athlete)
-                self.assertEqual(row["reported_cutoff_url"], kona_trace.HAMBURG_CUTOFF_URL)
+                self.assertEqual(row["reported_cutoff_url"], "https://tri-mag.de/szene/von-hamburg-nach-hawaii-so-schnell-musste-man-fuer-die-kona-quali-sein/")
                 self.assertIn("9 June 2026", row["reported_cutoff_source"])
                 self.assertIsNone(row["deepest_rank"])
                 self.assertIsNone(row["observed_cutoff"])

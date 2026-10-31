@@ -4,6 +4,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from urllib.request import Request, urlopen
 
+import reference_data
 from project_paths import (
     CACHE_DIR,
     DERIVED_DATA_DIR,
@@ -15,23 +16,7 @@ from scrape_qualifying_races import parse_races
 PAGE_CACHE = CACHE_DIR / "CoachCoxQualificationPages"
 DETAIL_CACHE = CACHE_DIR / "CoachCoxRaceSlotPages"
 OUTPUT_FILE = DERIVED_DATA_DIR / "coachcox_age_group_allocations.json"
-EVENT_NAMES = {
-    "im_austria": "Ironman Austria",
-    "im_barcelona": "Ironman Barcelona",
-    "im_france": "Ironman France",
-    "im_frankfurt": "Ironman Frankfurt",
-    "im_hamburg": "Ironman Hamburg",
-    "im_italy": "Ironman Italy",
-    "im_kalmar": "Ironman Sweden",
-    "im_kopenhagen": "Ironman Copenhagen",
-    "im_lanzarote": "Ironman Lanzarote",
-    "im_leeds": "Ironman Leeds",
-    "im_portugal": "Ironman Portugal - Cascais",
-    "im_tallinn": "Ironman Tallinn",
-    "im_thun": "Ironman Switzerland",
-    "im_vitoria": "Ironman Vitoria-Gasteiz",
-    "im_wales": "Ironman Wales",
-}
+EVENT_NAMES = reference_data.coachcox_event_names()
 
 
 def local_years(event_id):
