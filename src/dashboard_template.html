@@ -29,6 +29,7 @@
       <button class="tab-button" data-tab="compare" role="tab" aria-selected="false" aria-controls="comparePanel">Compare Races</button>
       <button class="tab-button" data-tab="kona" role="tab" aria-selected="false" aria-controls="konaPanel">Kona Trace</button>
       <button class="tab-button" data-tab="experimental" role="tab" aria-selected="false" aria-controls="experimentalPanel">Experimental</button>
+      <button class="tab-button" data-tab="backtest" role="tab" aria-selected="false" aria-controls="backtestPanel">Backtest</button>
     </nav>
 
     <div id="splitsPanel" class="tab-panel active">
@@ -145,6 +146,8 @@
         <label>Age group at your next race <select id="easiestAgeGroup"></select></label>
         <label>Finish time on an average course <input id="easiestTime" class="duration-input" type="text" inputmode="numeric" pattern="[0-9]+:[0-5][0-9]:[0-5][0-9]" value="10:30:00" aria-label="Finish time on an average course"></label>
         <label>Extra roll-down places <input id="easiestDeclines" type="number" min="0" step="1" value="0"></label>
+        <label>Races <select id="easiestOpenFilter"><option value="open">Still open this cycle</option><option value="all">All races</option></select></label>
+        <label>DNF risk <select id="easiestFinishRisk"><option value="on">Include</option><option value="off">Ignore</option></select></label>
       </div>
       <section>
         <h2>Your past results (optional)</h2>
@@ -214,9 +217,9 @@
           <ol>
             <li><strong>Your ability per split on an average course.</strong> <span class="formula">a<sub>s</sub> = geometric mean over your results of t<sub>s</sub> × A(age group then) ÷ A(age group next race) ÷ f<sub>s</sub>(race-year)</span> for s = swim, bike, run. f<sub>s</sub> are the split factors from the Experimental tab; A is the age-grading standard, so results from a younger age group are slowed down to your next age group. Transitions: your T1 + T2 relative to that race-year's median, averaged over your results.</li>
             <li><strong>Expected time at race-year r.</strong> <span class="formula">T<sub>r</sub> = a<sub>swim</sub>·f<sub>swim</sub>(r) + a<sub>bike</sub>·f<sub>bike</sub>(r) + a<sub>run</sub>·f<sub>run</sub>(r) + transition ratio × median T1+T2(r)</span>. A strong cyclist loses less time than the field on a hard bike course, so hilly courses rank higher for them. Without results: T<sub>r</sub> = your average-course time × f<sub>overall</sub>(r).</li>
-            <li><strong>Time needed N<sub>r</sub></strong> in your age group: the slower of the age-group winner and the performance-pool equivalent, or the last allocated age-group slot in legacy years. Manual extra places extend the pool or legacy age-group allocation separately. Reported, density and absence-scan modes use only compatible scope and cycle evidence; legacy scans rank raw age-group times with three consecutive absences, while gender-pool scans use fifteen. Extra places are not added to evidence estimates. Uncovered editions are excluded unless strict fallback is explicitly enabled. Changed allocation, modified course or a different cycle cannot silently borrow a cutoff.</li>
+            <li><strong>Time needed N<sub>r</sub></strong> in your age group: the slower of the age-group winner and the performance-pool equivalent, or the allocated age-group rank under historical legacy rules. The rank-factor scenario adds <span class="formula">floor(slots × factor + 0.5)</span> positions to the initial slots. Density and 15-absence scans require an original P1 race and compatible same-cycle matches. Missing P1 evidence can use a labelled strict fallback only when explicitly enabled. Reported cutoffs are separate historical evidence.</li>
             <li><strong>Chance in race-year r.</strong> <span class="formula">p<sub>r</sub> = Φ( ln(N<sub>r</sub> ÷ T<sub>r</sub>) ÷ σ )</span>. Φ is the standard normal distribution; σ is how much one athlete's result varies from race to race after course and conditions are removed (the residual SD of the course model), widened by √(1 + 1/n) when your ability comes from n results.</li>
-            <li><strong>Chance at a race</strong> = average of p<sub>r</sub> over its past race-years; every race-year is one equally likely scenario for field strength, slots, and weather. Races with few race-years are less certain.</li>
+            <li><strong>Chance at a race</strong> = average of p<sub>r</sub> over eligible past race-years. This what-if estimate is not a guaranteed likelihood; races with few eligible race-years are less certain.</li>
             <li><strong>Course fit</strong> = your expected time ÷ the expected time of same-level athletes (median splits of your age group at your average-course level) on this course, relative to an average course. Negative means the course suits your profile.</li>
           </ol>
           <p class="note">Pool estimates are unverified Kona-starter matching heuristics, not observed acceptance or predicted future cutoffs. They apply only to covered full-distance editions, not all historical years or 70.3 races. Not modelled: ceremony attendance, prior qualification, future changes in field size or allocation, and whether your results were your first IRONMAN (about 1% slower).</p>
@@ -402,10 +405,10 @@
       <p id="konaCoverageNote" class="note"></p>
       <section>
         <h2>Pool cutoffs and conditional skipped places</h2>
-        <p class="note">Two exploratory estimates are shown separately. The density estimate detects a drop in Kona matches; its minute-rounded range combines model support and match-selection sensitivity, not a confidence interval. The absence scan reports the last matched athlete before the first consecutive unmatched run after the fixed allocation: three within legacy age-group rankings, fifteen within gender performance pools. Missing matches, other qualifying races and special-entry routes can bias both methods. Neither proves acceptance or counts declined slots. Frankfurt 2026 uses a modified course, not a comparable full-distance finish time.</p>
+        <p class="note">For original P1 races, the density estimate detects a drop in compatible championship matches; its minute-rounded range is not a confidence interval. The scan reports the last matched athlete before 15 consecutive unmatched gender-pool ranks after the fixed allocation. Legacy age-group races have no density or scan estimate. Missing matches, other qualifying races and special-entry routes can bias both methods. Neither proves acceptance or counts declined slots. Frankfurt 2026 uses a modified course, not a comparable full-distance finish time.</p>
         <p class="note">Reported last-accepted pool times are source-labeled references, separate from athlete matches. A time reported to the minute does not establish an exact pool rank. A match-based cutoff is unknown until a slot source is attributed. A single local finish does not establish that source: athletes may qualify elsewhere or enter through Legacy or another special route. Reviewed attributions are assumptions, not verified acceptances. Unverified modes show candidate maxima, not qualifying cutoffs. Skipped places = max(0, deepest attributed pool rank minus initial pool slots); prior qualification, automatic-slot roll-downs, reallocations and Kona DNS mean this is not a count of people who declined.</p>
         <div class="table-wrap" style="max-height:none">
-          <table><thead><tr><th>Qualifying race</th><th>Year</th><th>Total slots</th><th>Initial pool slots</th><th>Matched starters</th><th>Attributed starters</th><th>Selected pool rank</th><th>Strict cutoff</th><th>Manual extra-place target</th><th>Reported last accepted</th><th>Density estimate</th><th>Absence scan</th><th>Modelled roll-down (%)</th><th>Selected time</th><th>Conditional skipped places</th><th>Selected starter</th></tr></thead><tbody id="konaSummaryBody"></tbody></table>
+          <table><thead><tr><th>Qualifying race</th><th>Year</th><th>Total slots</th><th>Initial pool slots</th><th>Matched starters</th><th>Attributed starters</th><th>Selected pool rank</th><th>Strict cutoff</th><th>Rank-factor scenario</th><th>Reported last accepted</th><th>Density estimate</th><th>Absence scan</th><th>Modelled roll-down (%)</th><th>Selected time</th><th>Conditional skipped places</th><th>Selected starter</th></tr></thead><tbody id="konaSummaryBody"></tbody></table>
         </div>
       </section>
       <div class="chart-grid">
@@ -419,7 +422,7 @@
         </div>
         <div class="chart-panel wide">
           <h2>Absence-scan roll-down assumption</h2>
-          <p class="note">The scan uses 3 consecutive absences within a legacy age group and 15 within a gender performance pool. This model-derived rate is an assumption, not an observed count or rate of declined slots.</p>
+          <p class="note">The scan uses 15 consecutive unmatched ranks in a compatible P1 gender performance pool. This model-derived rate is an assumption, not an observed count or rate of declined slots.</p>
           <svg id="konaRollDownChart" class="chart" viewBox="0 0 1000 380"></svg>
         </div>
       </div>
@@ -442,11 +445,15 @@
       </section>
     </div>
 
+    <div id="backtestPanel" class="tab-panel">
+      <p class="note">How well did the Race Finder model predict past results? Every figure is labelled with its objective: A = current rules applied to old results, B = historically correct rules.</p>
+      <div id="backtestContent"></div>
+    </div>
+
     <div id="experimentalPanel" class="tab-panel">
       <p class="note">Course and race-day conditions are estimated from athletes who finished several race-years of the same distance: each athlete is compared only with themselves, so ability cancels out. +5% means the same athlete was 5% slower than in the average qualifying race-year. Times are age-graded with the current Kona or 70.3 Standard first so that ageing between races does not make later years look harder, and the model removes the typical gain of returning athletes over their first appearance (<span id="experimentalReturningNote">—</span>). Shortened race-years are excluded. 70.3 factors compare Zell am See editions with each other only.</p>
       <div class="controls">
         <label>Distance <select id="experimentalDistance"><option value="im">IRONMAN 140.6</option><option value="703">IRONMAN 70.3</option></select></label>
-        <label>Top finishers (%) <input id="experimentalPercentile" type="number" min="0.1" max="100" step="0.1" value="20"></label>
       </div>
       <section>
         <h2>How the factors are calculated</h2>
@@ -486,8 +493,15 @@
       </section>
       <div class="chart-grid">
         <div class="chart-panel wide">
-          <h2 id="experimentalFactorTitle">Race-year difficulty</h2>
-          <p class="note">Each point is one race-year relative to the average qualifying race-year: course, season and race-day conditions combined. Points above zero were slower for the same athletes. This is the factor used for course-adjusted times.</p>
+          <div class="chart-heading">
+            <h2 id="experimentalFactorTitle">Race-year difficulty</h2>
+            <div class="chart-controls">
+              <label for="experimentalFactorSplit">Split
+                <select id="experimentalFactorSplit"><option value="overall">Overall</option><option value="swim">Swim</option><option value="t1">T1</option><option value="bike">Bike</option><option value="t2">T2</option><option value="run">Run</option></select>
+              </label>
+            </div>
+          </div>
+          <p class="note">Each point is one race-year relative to the average qualifying race-year: course, season and race-day conditions combined. Points above zero were slower for the same athletes. T1/T2 factors are diagnostic; standard-course transition conversions remain median-based.</p>
           <svg id="experimentalFactorChart" class="chart" viewBox="0 0 1000 400"></svg>
         </div>
         <div class="chart-panel wide">
@@ -496,7 +510,14 @@
           <svg id="experimentalSeasonChart" class="chart" viewBox="0 0 1000 340"></svg>
         </div>
         <div class="chart-panel wide">
-          <h2 id="experimentalFieldTitle">Course-adjusted all-cohort field strength</h2>
+          <div class="chart-heading">
+            <h2 id="experimentalFieldTitle">Course-adjusted all-cohort field strength</h2>
+            <div class="chart-controls">
+              <label for="experimentalPercentile">Top finishers (%)
+                <input id="experimentalPercentile" type="number" min="0.1" max="100" step="0.1" value="20">
+              </label>
+            </div>
+          </div>
           <p class="note">Top-percentage cutoff across both genders and all age groups, divided by the race-year's overall factor. Lower means a stronger field.</p>
           <svg id="experimentalFieldChart" class="chart" viewBox="0 0 1000 400"></svg>
         </div>

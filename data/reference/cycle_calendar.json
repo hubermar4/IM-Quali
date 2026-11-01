@@ -1,0 +1,150 @@
+{
+  "_comment": "Qualifying events already announced for the 2027 cycle (ironman.com). Races of a dashboard event that are not listed here are treated as not yet announced. Extend as ironman.com publishes more.",
+  "cycle": "2027",
+  "source_url": "https://www.ironman.com/races/im-world-championship-kona/qualifying-events-2027",
+  "retrieved": "2026-10-31",
+  "championship_date": "2027-10-09",
+  "window_start": "2026-08-22",
+  "events": [
+    {
+      "name": "IRONMAN Tallinn",
+      "date": "2026-08-22",
+      "location": "Tallinn, Estonia",
+      "slots": 45,
+      "event_id": "im_tallinn"
+    },
+    {
+      "name": "IRONMAN Vichy",
+      "date": "2026-08-23",
+      "location": "Vichy, France",
+      "slots": 50,
+      "event_id": null
+    },
+    {
+      "name": "IRONMAN Wisconsin",
+      "date": "2026-09-13",
+      "location": "Madison, WI, USA",
+      "slots": 55,
+      "event_id": null
+    },
+    {
+      "name": "IRONMAN Wales",
+      "date": "2026-09-13",
+      "location": "Pembrokeshire, United Kingdom",
+      "slots": 50,
+      "event_id": "im_wales"
+    },
+    {
+      "name": "IRONMAN Japan South Hokkaido",
+      "date": "2026-09-13",
+      "location": "Hokkaido, Japan",
+      "slots": 45,
+      "event_id": null
+    },
+    {
+      "name": "IRONMAN Italy Emilia Romagna",
+      "date": "2026-09-19",
+      "location": "Cervia, Italy",
+      "slots": 55,
+      "event_id": "im_italy"
+    },
+    {
+      "name": "IRONMAN Maryland",
+      "date": "2026-09-19",
+      "location": "Cambridge, MD, USA",
+      "slots": 55,
+      "event_id": null
+    },
+    {
+      "name": "IRONMAN Chattanooga",
+      "date": "2026-09-27",
+      "location": "Chattanooga, TN, USA",
+      "slots": 55,
+      "event_id": null
+    },
+    {
+      "name": "IRONMAN Calella-Barcelona",
+      "date": "2026-10-04",
+      "location": "Calella, Spain",
+      "slots": 55,
+      "event_id": "im_barcelona"
+    },
+    {
+      "name": "IRONMAN Gurye Korea",
+      "date": "2026-10-04",
+      "location": "Gurye, South Korea",
+      "slots": 45,
+      "event_id": null
+    },
+    {
+      "name": "IRONMAN Portugal-Cascais",
+      "date": "2026-10-17",
+      "location": "Cascais, Portugal",
+      "slots": 55,
+      "event_id": "im_portugal"
+    },
+    {
+      "name": "IRONMAN Australia",
+      "date": "2026-10-18",
+      "location": "Port Macquarie, NSW, Australia",
+      "slots": 55,
+      "event_id": null
+    },
+    {
+      "name": "IRONMAN California",
+      "date": "2026-10-18",
+      "location": "Sacramento, CA, USA",
+      "slots": 55,
+      "event_id": null
+    },
+    {
+      "name": "IRONMAN San Juan",
+      "date": "2026-11-01",
+      "location": "San Juan, Argentina",
+      "slots": 45,
+      "event_id": null
+    },
+    {
+      "name": "IRONMAN Florida",
+      "date": "2026-11-07",
+      "location": "Panama City, FL, USA",
+      "slots": 55,
+      "event_id": null
+    },
+    {
+      "name": "IRONMAN Malaysia",
+      "date": "2026-11-21",
+      "location": "Langkawi, Malaysia",
+      "slots": 50,
+      "event_id": null
+    },
+    {
+      "name": "IRONMAN Cozumel - Latin America Championship",
+      "date": "2026-11-22",
+      "location": "Cozumel, Mexico",
+      "slots": 100,
+      "event_id": null
+    },
+    {
+      "name": "IRONMAN Valdivia",
+      "date": "2026-11-29",
+      "location": "Valdivia, Chile",
+      "slots": 45,
+      "event_id": null
+    },
+    {
+      "name": "IRONMAN Oman",
+      "date": "2026-12-05",
+      "location": "Muscat, Oman",
+      "slots": 45,
+      "event_id": null
+    },
+    {
+      "name": "IRONMAN Western Australia - Asia-Pacific Championship",
+      "date": "2026-12-06",
+      "location": "Busselton, WA, Australia",
+      "slots": 75,
+      "event_id": null
+    }
+  ]
+}

@@ -37,14 +37,14 @@ same question with different evidence.
 | Captures | Course, season, weather, water temperature, run profile | Bike terrain only |
 | Needs | Results of athletes racing several race-years | One GPX track per race |
 | Code | [course_difficulty.py](../src/course_difficulty.py) | [gpx_course_model.py](../src/gpx_course_model.py), [build_gpx_report.py](../src/build_gpx_report.py) |
-| Role in the dashboard | **Used for all conversions** | Cross-check ("Bike course check: GPX model vs. athlete data") |
+| Role in the dashboard | **Used for standard-course conversions**; T1/T2 factors are diagnostic only | Cross-check ("Bike course check: GPX model vs. athlete data") |
 
 ## Approach A: repeat athletes (empirical)
 
 **Idea.** An athlete's ability cancels out when the same athlete is compared with
 themselves on different courses. What remains is the race-year effect.
 
-**Model** (per split: swim, bike, run, overall):
+**Model** (per split: swim, T1, bike, T2, run, overall):
 
 ```
 log(age-graded time) = athlete + race-year effect + returning effect
@@ -70,7 +70,9 @@ log(age-graded time) = athlete + race-year effect + returning effect
    walked marathons) are trimmed and the model is refitted.
 5. **Factors.** `estimate_course_factors` returns a multiplicative factor
    `exp(effect)` per race-year and split, with standard errors (typically
-   0.1-0.3% per race-year) and fit diagnostics.
+   0.1-0.3% per race-year) and fit diagnostics. T1/T2 factors are estimated
+   where transition times are available, but are used only for Course Analysis
+   diagnostics; standard-course transitions remain median-based.
 6. **Course and season.** `course_and_season_effects` splits the race-year
    factor into `course x season x conditions` (log-additive, season effects
    centred over the baseline). The season effect is almost entirely bike
@@ -175,7 +177,7 @@ Track caveats:
 | Use | Approach | Code |
 |---|---|---|
 | Athlete level on a standard course from past results | A | `athleteLevelRows`, `currentAbility` |
-| Race-year and course factors (overall, swim, bike, run) | A | `load_course_factors` |
+| Race-year and course factors (overall, swim, bike, run); T1/T2 diagnostics | A | `load_course_factors` |
 | Race targets "as raced" vs. "on a standard course" | A | `courseFactor`, `courseEffect` |
 | Cross-race ranking and predicted margin | A | `renderEasiest` |
 | Bike course check | B vs. A | `bike_course_correction`, `experimentalGpxChart` |

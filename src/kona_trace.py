@@ -276,6 +276,7 @@ def build_kona_trace(kona_frame, calendar, events, read_results, event_names, ye
                 "reported_cutoff_source": reported.get("reported_cutoff_source"),
                 "reported_cutoff_url": reported.get("reported_cutoff_url"),
                 "reported_cutoff_athlete": reported.get("reported_cutoff_athlete"),
+                "ranked_raw_times": [seconds_value(raw_rows[row_id].get("Overall Time")) for row_id in cohort["row_ids"]],
                 "race_matches": [(starter, entry) for starter, entry in race_matches
                                  if starter["gender"] == gender and (not legacy or entry["division"] == cohort["division"])],
             })
@@ -285,12 +286,14 @@ def build_kona_trace(kona_frame, calendar, events, read_results, event_names, ye
         for pool in pools:
             matches = [(starter, entry) for starter, entry in pool["race_matches"] if mode == "all" or len(starter["matches"]) == 1]
             ranked_matches = [(starter, entry) for starter, entry in matches if entry["pool_rank"] is not None]
+            metric_ranked_matches = [(starter, entry) for starter, entry in ranked_matches
+                                     if pool["slot_scope"] != "age group" or entry["pool_rank"] != 1]
             deepest = max(ranked_matches, key=lambda item: item[1]["pool_rank"], default=None)
             rows.append({
-                **{key: value for key, value in pool.items() if key not in {"race_matches", "pool_times"}},
+                **{key: value for key, value in pool.items() if key not in {"race_matches", "pool_times", "ranked_raw_times"}},
                 "cutoff_estimate": estimate_pool_cutoff(
-                    pool["pool_times"], [entry["pool_rank"] for _, entry in ranked_matches], pool["pool_slots"]),
-                "matched_starters": len(matches), "matched_pool_starters": len(ranked_matches),
+                    pool["pool_times"], [entry["pool_rank"] for _, entry in metric_ranked_matches], pool["pool_slots"]),
+                "matched_starters": len(matches), "matched_pool_starters": len(metric_ranked_matches),
                 "deepest_rank": None, "observed_cutoff": None, "deepest_name": None,
                 "estimated_skipped_slots": None,
                 "candidate_deepest_rank": deepest[1]["pool_rank"] if deepest else None,
@@ -301,6 +304,16 @@ def build_kona_trace(kona_frame, calendar, events, read_results, event_names, ye
             })
             if mode == "all":
                 rows[-1]["manual_pool_times"] = pool["pool_times"]
+                matched = {entry["pool_rank"]: len(starter["matches"]) for starter, entry in metric_ranked_matches}
+                age_group_rank_one_matches = {
+                    entry["pool_rank"] for _, entry in ranked_matches
+                    if pool["slot_scope"] == "age group" and entry["pool_rank"] == 1
+                }
+                rows[-1]["ranking_evidence"] = [
+                    [raw_time, round(ranked_time, 4) if pool["slot_scope"] == "gender" else None,
+                     matched.get(rank, 0), rank in age_group_rank_one_matches]
+                    for rank, (raw_time, ranked_time) in enumerate(zip(pool["ranked_raw_times"], pool["pool_times"]), 1)
+                ]
     for all_row, single_row, pool in zip(summaries["all"], summaries["single"], pools):
         estimate = all_row["cutoff_estimate"].copy()
         single = single_row["cutoff_estimate"]
@@ -317,8 +330,9 @@ def build_kona_trace(kona_frame, calendar, events, read_results, event_names, ye
                     estimate[f"{bound}_time"], single[f"{bound}_time"], estimate["time"], single["time"])
         all_row["cutoff_estimate"] = single_row["cutoff_estimate"] = estimate
         scan = scan_pool_cutoff(pool["pool_times"],
-                               [entry["pool_rank"] for _, entry in pool["race_matches"]], pool["pool_slots"],
-                               consecutive_absences=3 if pool["slot_scope"] == "age group" else 15)
+                       [entry["pool_rank"] for _, entry in pool["race_matches"]
+                    if pool["slot_scope"] != "age group" or entry["pool_rank"] != 1], pool["pool_slots"],
+                               consecutive_absences=5 if pool["slot_scope"] == "age group" else 15)
         scan["athlete"] = next((starter["name"] for starter, entry in pool["race_matches"]
                                 if scan["rank"] is not None and entry["pool_rank"] == scan["rank"]), None)
         all_row["cutoff_scan"] = single_row["cutoff_scan"] = scan

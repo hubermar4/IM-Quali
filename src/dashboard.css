@@ -76,6 +76,17 @@
     .chart-controls { display: flex; flex: 0 0 auto; align-items: end; gap: 10px; }
     .chart-controls label { gap: 3px; }
     .chart-controls select { height: 34px; min-width: 108px; padding-block: 5px; }
+    .chart-controls input[type=number] { width: 108px; height: 34px; padding-block: 5px; }
+    .course-race-toggle { position: relative; min-height: 28px; padding: 3px 0 3px 17px; color: var(--ink); background: transparent; font: inherit; text-align: left; }
+    .course-race-toggle:hover { color: var(--accent); background: transparent; }
+    .course-race-toggle::before { content: "+"; position: absolute; left: 0; color: var(--accent); }
+    .course-race-toggle[aria-expanded="true"]::before { content: "-"; }
+    .standard-course-row td { background: var(--accent-soft) !important; font-weight: 750; }
+    .course-year-details td { padding: 0; background: var(--panel) !important; }
+    .course-year-details td:first-child { position: static; }
+    .course-year-table { min-width: 740px; }
+    .course-year-table th { position: static; z-index: auto; }
+    .course-year-table td, .course-year-table td:first-child { position: static; }
     [hidden] { display: none !important; }
     svg.chart { display: block; width: 100%; min-height: 300px; background: var(--panel); }
     .chart text { font: 11px "Aptos", "Segoe UI", sans-serif; fill: var(--muted); }
@@ -91,6 +102,24 @@
     .chart .trace-toggle[aria-pressed="false"] { opacity: .35; }
     .chart-tooltip { position: absolute; z-index: 8; display: none; pointer-events: none; min-width: 125px; max-width: min(320px, calc(100% - 8px)); padding: 8px 10px; color: white; background: rgba(21,35,30,.96); border-radius: 3px; box-shadow: 0 4px 14px rgba(21,35,30,.2); font-size: 12px; line-height: 1.35; }
     .chart-tooltip strong { display: block; color: #f2cc66; font-size: 11px; }
+    .evidence-scroll { overflow-x: auto; container-type: inline-size; }
+    #targetEvidenceChart { min-width: 700px; }
+    .evidence-year { padding: 14px 0; border-bottom: 1px solid var(--line); }
+    .evidence-year h3 { margin: 0; font-size: 14px; }
+    .evidence-year h3, .evidence-year > .note { position: sticky; left: 0; width: min(100%, 100cqi); }
+    .evidence-legend { position: sticky; left: 0; width: min(100%, 100cqi); box-sizing: border-box; display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 290px), 1fr)); gap: 5px 16px; padding: 0; margin: 8px 0; list-style: none; font-size: 12px; line-height: 1.4; }
+    .evidence-legend li { min-width: 0; overflow-wrap: anywhere; }
+    .evidence-swatch { display: inline-block; width: 18px; margin-right: 6px; border-top: 3px solid var(--marker-color); vertical-align: middle; }
+    .evidence-winner-list { position: sticky; left: 0; width: min(100%, 100cqi); box-sizing: border-box; display: flex; flex-wrap: wrap; gap: 5px 16px; padding: 0; margin: 6px 0 10px; list-style: none; font-size: 12px; line-height: 1.4; }
+    .evidence-winner-list li { min-width: 0; overflow-wrap: anywhere; }
+    .evidence-winner-swatch { display: inline-block; width: 9px; height: 9px; margin-right: 6px; border-radius: 50%; background: #d4a017; vertical-align: middle; }
+    .evidence-winner-role { display: block; margin-left: 15px; color: var(--muted); font-size: 11px; }
+    .evidence-winner-marker { cursor: help; }
+    .evidence-winner-marker:focus circle { stroke: var(--ink); stroke-width: 2; }
+    svg.evidence-chart { min-height: 0; height: auto; aspect-ratio: 1000 / 260; }
+    .evidence-point { cursor: crosshair; }
+    .evidence-point:focus { outline: none; stroke: var(--ink); stroke-width: 2; }
+    #targetEvidenceTooltip { position: fixed; z-index: 100; pointer-events: none; max-width: min(320px, calc(100vw - 8px)); padding: 8px 10px; color: white; background: #15231e; border-radius: 3px; font-size: 12px; line-height: 1.4; overflow-wrap: anywhere; }
     .chart-subtitle { margin: 20px 0 0; font-size: 13px; font-weight: 800; color: var(--ink); }
     .method { padding: 14px 18px; background: var(--panel); border: 1px solid var(--line); border-radius: 4px; font-size: 13px; line-height: 1.55; }
     .method summary { cursor: pointer; font-weight: 800; }
@@ -125,6 +154,7 @@
       .chart-controls { width: 100%; }
       .chart-controls label { flex: 1 1 0; }
       .chart-controls select { width: 100%; min-width: 0; }
+      .chart-controls input[type=number] { width: 100%; min-width: 0; }
       svg.chart { min-height: 260px; }
     }
     @media (max-width: 900px) { .chart-grid { grid-template-columns: 1fr; } .chart-panel.wide { grid-column: auto; } }

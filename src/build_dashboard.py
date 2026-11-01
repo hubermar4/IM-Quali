@@ -3,6 +3,8 @@ import re
 from pathlib import Path
 
 import pandas as pd
+import backtest
+import dashboard_insights
 import qualification_full
 import reference_data
 import qualification_703 as qualification_half
@@ -137,6 +139,9 @@ def discover_events():
             "qualifying": qualifying,
             "qualification_slots": slots,
             "qualification_slot_cycle": slot_cycle,
+            "qualification_slot_source_url": _SLOTS.get("source_urls", {}).get(
+              f"{'703' if group == '703' else 'kona'}_{slot_cycle}"
+            ) if slot_cycle else None,
             "qualification_note": note,
             "modified_courses": {
               year: description
@@ -431,6 +436,10 @@ def load_historical_qualification_data(event_id, event):
     if source is None:
       unavailable_years.append(year)
       continue
+    cycles = source.get("cycles") or []
+    if len(cycles) != 1 or (source["method"] == "performance" and cycles[0] not in module.STANDARDS):
+      unavailable_years.append(year)
+      continue
     official_complete = official_flags_cover_source(flag_counts, source)
     if official_complete:
       official_years.append(year)
@@ -497,8 +506,7 @@ def load_historical_qualification_data(event_id, event):
         })
       continue
 
-    cycle = source["cycles"][0] if source["cycles"] else module.CURRENT_CYCLE
-    cycle = cycle if cycle in module.STANDARDS else module.CURRENT_CYCLE
+    cycle = cycles[0]
     try:
       if is_half:
         result = module.process_dataframe(
@@ -743,6 +751,7 @@ def load_division_statistics(event_id, event):
     times = finishers.groupby("Division")["finish_td"]
     winners = times.min()
     medians = times.median()
+    top_twenty = finishers["finish_td"].dt.total_seconds().groupby(finishers["Division"]).quantile(0.2)
     counts = times.size()
     statistics[year] = {
       division: {
@@ -750,6 +759,7 @@ def load_division_statistics(event_id, event):
         "finishers": int(counts.get(division, 0)),
         "winner": round(winners[division].total_seconds()) if division in winners else None,
         "median": round(medians[division].total_seconds()) if division in medians else None,
+        "top_20_percent": round(top_twenty[division]) if division in top_twenty else None,
       }
       for division in sorted(set(starters.index) | set(counts.index))
     }
@@ -865,11 +875,10 @@ def load_qualification_data(event_id, event):
     }
 
 
-def load_course_factors(datasets):
-  """Race-year factors plus course, season and returning-athlete effects per distance."""
-  factors = {event_id: {} for event_id in datasets}
-  models = {}
-  for group, module in (("im", qualification_full), ("703", qualification_half)):
+def course_factor_frames(datasets):
+  """Per distance group: repeat-athlete candidate records and the baseline race-years."""
+  groups = {}
+  for group in ("im", "703"):
     frames, baseline = [], set()
     for event_id, dataset in datasets.items():
       records = pd.DataFrame(dataset["records"])
@@ -886,9 +895,20 @@ def load_course_factors(datasets):
       frames.append(records)
       if dataset["qualifying"]:
         baseline.update(records["race_year"])
-    if not frames:
+    if frames:
+      groups[group] = (pd.concat(frames, ignore_index=True), baseline)
+  return groups
+
+
+def load_course_factors(datasets):
+  """Race-year factors plus course, season and returning-athlete effects per distance."""
+  factors = {event_id: {} for event_id in datasets}
+  models = {}
+  frames_by_group = course_factor_frames(datasets)
+  for group, module in (("im", qualification_full), ("703", qualification_half)):
+    if group not in frames_by_group:
       continue
-    combined = pd.concat(frames, ignore_index=True)
+    combined, baseline = frames_by_group[group]
     estimates, fit = estimate_course_factors(combined, baseline, module.get_ratio)
     for label, entry in estimates.items():
       event_id, year = label.split(":")
@@ -1013,6 +1033,17 @@ def load_dashboard_data():
       {key: value for key, value in row.items() if key != "manual_pool_times"}
       for row in counterfactual_trace["summaries"]["all"]
     ]
+    traces[cycle]["counterfactual_winners"] = [
+      {
+        "name": starter["name"], "gender": starter["gender"],
+        "matches": [
+          {key: match.get(key) for key in ("event_id", "year", "division", "finish_time", "pool_rank", "initial_slot")}
+          for match in starter["matches"] if match.get("initial_slot") == "Automatic winner"
+        ],
+      }
+      for starter in counterfactual_trace["starters"]
+      if any(match.get("initial_slot") == "Automatic winner" for match in starter["matches"])
+    ]
     traces[cycle]["counterfactual_standards"] = counterfactual_trace["standards"]
     traces[cycle]["counterfactual_standard_cycle"] = counterfactual_trace["standard_cycle"]
   if "im_kona" in datasets:
@@ -1034,6 +1065,14 @@ def load_dashboard_data():
           "standards": model.get("standards", {}),
           "cycle": model.get("cycle"),
       }
+  if "im_kona" in datasets:
+    race_datasets = {event_id: dataset for event_id, dataset in datasets.items() if event_id != "im_kona"}
+    datasets["im_kona"]["rolldown_calibration"] = dashboard_insights.rolldown_calibration(traces)
+    datasets["im_kona"]["dnf_rates"] = dashboard_insights.dnf_rates(race_datasets)
+    datasets["im_kona"]["event_calendar"] = dashboard_insights.event_calendar(race_datasets, traces)
+    datasets["im_kona"]["backtest"] = backtest.run_backtest(
+      course_factor_frames(datasets), race_datasets, models, traces,
+    )
   return datasets
 
 

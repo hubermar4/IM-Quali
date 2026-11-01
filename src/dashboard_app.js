@@ -12,6 +12,7 @@
     const qualificationDeclines = document.getElementById("qualificationDeclines");
     const qualificationLegacyDeclines = document.getElementById("qualificationLegacyDeclines");
     const experimentalPercentile = document.getElementById("experimentalPercentile");
+    const experimentalFactorSplit = document.getElementById("experimentalFactorSplit");
     const maleAutoSlots = document.getElementById("maleAutoSlots");
     const femaleAutoSlots = document.getElementById("femaleAutoSlots");
     const maleSlots = document.getElementById("maleSlots");
@@ -25,6 +26,7 @@
     const experimentalDistance = document.getElementById("experimentalDistance");
     const compareSplitDistance = document.getElementById("compareSplitDistance");
     const splitStatsCache = new Map();
+    const standardSplitMedianCache = new Map();
     const athleteIndexCache = new Map();
     const genderTimeCache = new Map();
     const slotAllocations = {};
@@ -307,6 +309,10 @@
         const historical = ds.historical_qualification;
         const rows = historical.targets.filter(row => row.year === year);
         if (!rows.length) return null;
+        const source = rows[0].source;
+        if (!source || source.cycles?.length !== 1 || source.other_cycles?.length ||
+            !["legacy", "performance"].includes(source.method) ||
+            (source.method === "performance") !== (rows[0].slot_scope === "gender")) return null;
         const target = rows.find(row => row.division === division);
         if (!target) {
           // No slot row: nobody finished in this age group, so a finisher would take its slot.
@@ -489,16 +495,16 @@
       const genderKey = gender.toLowerCase();
       const prefix = gender === "Male" ? "M" : "F";
       const ratio = currentRatio(gender);
-      const declines = Math.max(0, Math.round(Number(qualificationDeclines.value) || 0));
+      const factor = qualificationAssumptions.rollDownFactor;
       const standardName = dataset().group === "703" ? "70.3 Standard" : "Kona Standard";
       const standardFor = (row, rowGender, rowAgeGroup, extraPlaces = 0) => strictQualificationStandard(
         eventSelect.value, row.year, rowGender, rowAgeGroup, "current",
         { extraPlaces, performanceSlots: row[`${rowGender.toLowerCase()}_perf`] },
       );
-      document.getElementById("qualificationHead").innerHTML = `<tr><th>Year</th><th>${prefix} finishers</th><th>M / F total slots</th><th title="Projected no-decline qualifiers: automatic winner slot plus performance-pool places.">M / F ${ageGroup} qualifiers</th><th>${prefix} auto</th><th>${prefix} performance pool</th><th title="Age-graded time of the last performance-pool qualifier.">${standardName} cutoff</th><th title="Pool cutoff converted to a raw ${prefix}${ageGroup} finish time.">${prefix}${ageGroup} pool equivalent</th><th>${prefix}${ageGroup} winner</th>      <th title="Slower of the age-group winner and the pool equivalent.">${prefix}${ageGroup} time needed</th><th title="Time needed when ${declines} pool qualifiers decline.">Time needed (+${declines} declines)</th><th title="Strict ${prefix}${ageGroup} qualifiers (winner slot + pool places) per ${prefix}${ageGroup} finisher.">${prefix}${ageGroup} qualifiers / finishers</th><th title="How much slower the raw ${prefix}${ageGroup} target becomes if the gender pool rolls down 5 more places: a measure of how much declines matter in that race-year.">Roll-down sensitivity (+5 pool places)</th></tr>`;
+      document.getElementById("qualificationHead").innerHTML = `<tr><th>Year</th><th>${prefix} finishers</th><th>M / F total slots</th><th title="Projected no-decline qualifiers: automatic winner slot plus performance-pool places.">M / F ${ageGroup} qualifiers</th><th>${prefix} auto</th><th>${prefix} performance pool</th><th title="Age-graded time of the last performance-pool qualifier.">${standardName} cutoff</th><th title="Pool cutoff converted to a raw ${prefix}${ageGroup} finish time.">${prefix}${ageGroup} pool equivalent</th><th>${prefix}${ageGroup} winner</th><th title="Slower of the age-group winner and the pool equivalent.">${prefix}${ageGroup} strict target</th><th>Rank-factor target (f=${factor})</th><th title="Strict ${prefix}${ageGroup} qualifiers (winner slot + pool places) per ${prefix}${ageGroup} finisher.">${prefix}${ageGroup} qualifiers / finishers</th><th title="How much slower the raw ${prefix}${ageGroup} target becomes if the gender pool rolls down 5 more places.">Sensitivity (+5 pool places)</th></tr>`;
       document.getElementById("qualificationBody").innerHTML = summaries.map(row => {
         const standard = standardFor(row, gender, ageGroup);
-        const rolled = standardFor(row, gender, ageGroup, declines);
+        const rolled = standard && calibratedStandard(standard, eventSelect.value, gender, "current");
               const deeper = standardFor(row, gender, ageGroup, 5);
               const totalSlots = `${row.male_auto + row.male_perf} / ${row.female_auto + row.female_perf}`;
               const ageGroupSlots = `${standardFor(row, "Male", ageGroup)?.qualifiers ?? "—"} / ${standardFor(row, "Female", ageGroup)?.qualifiers ?? "—"}`;
@@ -515,7 +521,7 @@
       const finite = value => Number.isFinite(value) ? value : null;
       const series = [
         { label: `${prefix}${ageGroup} time needed`, color: "#277da1", values: summaries.map(row => finite(standardFor(row, gender, ageGroup)?.needed)) },
-        { label: `${prefix}${ageGroup} +${declines} declines`, color: "#e76f51", values: summaries.map(row => finite(standardFor(row, gender, ageGroup, declines)?.needed)) },
+        { label: `${prefix}${ageGroup} rank factor ${factor}`, color: "#e76f51", values: summaries.map(row => { const strict = standardFor(row, gender, ageGroup); return finite(strict && calibratedStandard(strict, eventSelect.value, gender, "current").needed); }) },
         { label: "Selected cutoff target", color: "#2a9d8f", values: summaries.map(row => finite(qualificationStandard(eventSelect.value, row.year, gender, ageGroup, "current")?.needed)) },
       ];
       lineChart("qualificationChart", years, series);
@@ -578,8 +584,7 @@
       const ageGroup = qualificationAgeGroup.value;
       const gender = qualificationGender.value;
       const prefix = gender === "Male" ? "M" : "F";
-      const poolDeclines = Math.max(0, Math.round(Number(qualificationDeclines.value) || 0));
-      const ageGroupDeclines = Math.max(0, Math.round(Number(qualificationLegacyDeclines.value) || 0));
+      const factor = qualificationAssumptions.rollDownFactor;
       const years = [...new Set(qualification.targets.map(row => row.year))].sort().filter(compareYearVisible);
       const latestTarget = [...qualification.targets].sort((left, right) => left.year.localeCompare(right.year)).at(-1);
       document.getElementById("qualificationSlotsMetric").textContent = "Varies by race-year";
@@ -589,12 +594,11 @@
       const standardFor = (year, rowGender, rowAgeGroup, rolled = false) => {
         const standard = strictQualificationStandard(eventSelect.value, year, rowGender, rowAgeGroup, "historical");
         if (!rolled || !standard) return standard;
-        const extraPlaces = standard.scope === "age group" ? ageGroupDeclines : poolDeclines;
-        return strictQualificationStandard(eventSelect.value, year, rowGender, rowAgeGroup, "historical", { extraPlaces });
+        return calibratedStandard(standard, eventSelect.value, rowGender, "historical");
       };
 
       const standardName = dataset().group === "703" ? "70.3 Standard" : "Kona Standard";
-      document.getElementById("qualificationHead").innerHTML = `<tr><th>Year</th><th>Method</th><th>Source slots</th><th>M / F total slots</th><th title="Allocated age-group slots in legacy years; projected no-decline qualifiers in performance-pool years.">M / F ${ageGroup} slots</th><th title="Performance-pool years only: age-graded time of the last pool qualifier.">${standardName} cutoff</th><th title="Performance-pool years only: pool cutoff converted to a raw ${prefix}${ageGroup} time.">${prefix}${ageGroup} pool equivalent</th><th>${prefix}${ageGroup} winner</th><th title="Legacy years: finish time of the last allocated ${prefix}${ageGroup} slot. Performance-pool years: slower of the winner and the pool equivalent.">${prefix}${ageGroup} time needed</th><th title="After X=${poolDeclines} pool declines (performance-pool years) or Y=${ageGroupDeclines} age-group declines (legacy years).">      Time needed (X=${poolDeclines} / Y=${ageGroupDeclines})</th><th title="Strict ${prefix}${ageGroup} slots or qualifiers per ${prefix}${ageGroup} finisher.">${prefix}${ageGroup} qualifiers / finishers</th><th title="How much slower the raw target becomes after one more ${prefix}${ageGroup} place (legacy years) or five more gender-pool places (performance-pool years).">Roll-down sensitivity</th><th>Official results check</th></tr>`;
+      document.getElementById("qualificationHead").innerHTML = `<tr><th>Year</th><th>Method</th><th>Source slots</th><th>M / F total slots</th><th title="Allocated age-group slots in legacy years; projected no-decline qualifiers in performance-pool years.">M / F ${ageGroup} slots</th><th title="Performance-pool years only: age-graded time of the last pool qualifier.">${standardName} cutoff</th><th title="Performance-pool years only: pool cutoff converted to a raw ${prefix}${ageGroup} time.">${prefix}${ageGroup} pool equivalent</th><th>${prefix}${ageGroup} winner</th><th>${prefix}${ageGroup} strict target</th><th>Rank-factor target (f=${factor})</th><th title="Strict ${prefix}${ageGroup} slots or qualifiers per ${prefix}${ageGroup} finisher.">${prefix}${ageGroup} qualifiers / finishers</th><th title="How much slower the raw target becomes after one more age-group place or five more pool places.">Sensitivity</th><th>Official results check</th></tr>`;
       document.getElementById("qualificationBody").innerHTML = years.map(year => {
         const standard = standardFor(year, gender, ageGroup);
         const rolled = standardFor(year, gender, ageGroup, true);
@@ -612,13 +616,13 @@
       const unavailable = qualification.unavailable_years.length
         ? ` Historical slot data is unavailable for: ${qualification.unavailable_years.join(", ")}.`
         : "";
-      document.getElementById("qualificationNote").textContent = `Historical mode uses each race-year's own qualifying cycle: its slot allocation, rules, and age-grading standard. Legacy years use the official age-group allocation from the results' Qualified flags when they cover the selected cycle, otherwise a published or reconstructed allocation. X=${poolDeclines} moves down the gender pool in performance-pool years; Y=${ageGroupDeclines} moves down within ${prefix}${ageGroup} in legacy years. In the 2026 cycle IRONMAN switched to gender-split pools in November 2025 and applied the split retroactively to earlier races. A * marks race-years that also offered slots for another championship.${unavailable}`;
+      document.getElementById("qualificationNote").textContent = `Historical mode uses each race-year's verified qualifying cycle, allocation and standard. Legacy years use official, published or reconstructed age-group allocations. The factor ${factor} adds hypothetical positions to the applicable rank. Race-years with ambiguous cycles are unavailable.${unavailable}`;
       document.getElementById("qualificationTableTitle").textContent = `Historical qualification by year · ${prefix}${ageGroup}`;
       document.getElementById("qualificationChartTitle").textContent = `Historical time needed and roll-down · ${prefix}${ageGroup}`;
       const finite = value => Number.isFinite(value) ? value : null;
       const series = [
         { label: `${prefix}${ageGroup} time needed`, color: "#277da1", values: years.map(year => finite(standardFor(year, gender, ageGroup)?.needed)) },
-        { label: `${prefix}${ageGroup} roll-down (X=${poolDeclines} pool / Y=${ageGroupDeclines} AG)`, color: "#e76f51", values: years.map(year => finite(standardFor(year, gender, ageGroup, true)?.needed)) },
+        { label: `${prefix}${ageGroup} rank factor ${factor}`, color: "#e76f51", values: years.map(year => finite(standardFor(year, gender, ageGroup, true)?.needed)) },
         { label: "Selected cutoff target", color: "#2a9d8f", values: years.map(year => finite(qualificationStandard(eventSelect.value, year, gender, ageGroup, "historical")?.needed)) },
       ];
       lineChart("qualificationChart", years, series);
@@ -700,8 +704,8 @@
       ], percent);
     }
     function updateTitle() {
-      const labels = { splits: "Split Explorer", qualification: "Qualification", odds: "Can I Qualify?", easiest: "Where Can I Qualify Most Easily?", overall: "Overall Times", statistics: "Race Statistics", compare: "Compare Races", kona: "Kona Qualification Trace", experimental: "Experimental", qtime: "Your time", qdifficulty: "Race difficulty" };
-      const aggregateView = ["compare", "experimental", "odds", "easiest", "kona", "qtime", "qdifficulty"].includes(activeTab);
+      const labels = { splits: "Split Explorer", qualification: "Qualification", odds: "Can I Qualify?", easiest: "Where Can I Qualify Most Easily?", overall: "Overall Times", statistics: "Race Statistics", compare: "Compare Races", kona: "Kona Qualification Trace", experimental: "Experimental", backtest: "Backtest", qyou: "You", qtime: "Your time", qdifficulty: "Race difficulty" };
+      const aggregateView = ["compare", "experimental", "backtest", "odds", "easiest", "kona", "qyou", "qtime", "qdifficulty"].includes(activeTab);
       document.querySelector(".event-control").hidden = aggregateView;
       document.getElementById("eventTitle").textContent = aggregateView ? labels[activeTab] : `${dataset().name} · ${labels[activeTab]}`;
     }
@@ -927,16 +931,15 @@
         return `—<br><small>Scan did not clear the strict allocation boundary</small>`;
       }
       const rankScope = row.slot_scope === "age group" ? "age-group rank" : "gender-pool rank";
-      return `<span title="Unverified estimate; scan starts at ${rankScope} ${row.pool_slots + 1}">${qualificationDuration(scan.time)}</span><br><small>${escapeHtml(scan.athlete)}<br>${rankScope} ${scan.rank}<br>${scan.consecutive_absences} absences: ranks ${scan.gap_start_rank} to ${scan.gap_end_rank}</small>`;
+      return `<span title="Unverified estimate; scan starts at ${rankScope} ${row.pool_slots + 1}">${qualificationDuration(scan.time)}</span><br><small>${escapeHtml(scan.athlete)}<br>${rankScope} ${scan.rank}<br>${scan.consecutive_absences} unmatched ranks: ${scan.gap_start_rank} to ${scan.gap_end_rank}</small>`;
     }
     function manualKonaCutoff(row, trace) {
-      const extraPlaces = trace.slot_scope === "age group"
-        ? qualificationAssumptions.legacyExtraPlaces : qualificationAssumptions.extraPlaces;
-      const rank = row.pool_slots + extraPlaces;
+      const factor = qualificationAssumptions.rollDownFactor;
+      const rank = row.pool_slots + Math.floor(row.pool_slots * factor + 0.5);
       const time = row.manual_pool_times?.[rank - 1];
       if (!Number.isFinite(time) || rank <= 0) return `—<br><small>No ranked finisher at slot ${rank}</small>`;
       const rankScope = trace.slot_scope === "age group" ? "age-group rank" : "gender-pool rank";
-      return `<strong>${qualificationDuration(time)}</strong><br><small>${extraPlaces} extra place${extraPlaces === 1 ? "" : "s"} · ${rankScope} ${rank}</small>`;
+      return `<strong>${qualificationDuration(time)}</strong><br><small>Factor ${factor} · ${rankScope} ${rank}</small>`;
     }
     function championshipVenues(trace) {
       return ["Male", "Female"].map(gender => {
@@ -966,7 +969,8 @@
       summaryHeaders[6].textContent = legacy ? "Selected age-group rank" : "Selected pool rank";
       summaryHeaders[7].textContent = legacy ? "Strict raw cutoff" : "Strict age-graded cutoff";
       summaryHeaders[10].textContent = "Match-density boundary";
-      summaryHeaders[11].textContent = legacy ? "3-absence age-group scan" : "15-absence gender-pool scan";
+      summaryHeaders[8].textContent = "Rank-factor scenario";
+      summaryHeaders[11].textContent = "15-absence gender-pool scan";
       summaryHeaders[13].textContent = legacy ? "Selected raw time" : "Selected age-graded time";
       document.querySelector("#konaMatchesBody").closest("table").querySelectorAll("th")[8].textContent = legacy ? "Age-group rank" : "Pool rank";
       document.querySelector("#konaMatchesBody").closest("table").querySelectorAll("th")[9].textContent = legacy ? "Raw ranked time" : "Age-graded time";
@@ -988,6 +992,7 @@
         estimated_skipped_slots: row.candidate_skipped_slots,
       } : reviewedKonaSummary(row, starters)).map(row => ({
         ...row,
+        ...(legacy ? {cutoff_estimate: {time: null, reason: "Original age-group rules: pool matching unsupported"}, cutoff_scan: {time: null, reason: "Original age-group rules: pool matching unsupported"}} : {}),
         manual_pool_times: trace.summaries.all.find(pool => pool.event_id === row.event_id && pool.year === row.year
           && pool.gender === row.gender && pool.division === row.division)?.manual_pool_times,
       }));
@@ -1000,30 +1005,30 @@
       rows.forEach(row => { row.estimated_cutoff = row.cutoff_estimate?.time; row.scanned_cutoff = row.cutoff_scan?.time; });
       const timeSeries = [
         [legacy ? "Strict age-group cutoff" : "Strict pool cutoff", "strict_cutoff", "#006d77"],
-        ["Manual extra-place target", "manual_extra_cutoff", "#e76f51"],
+        ["Rank-factor scenario", "manual_extra_cutoff", "#e76f51"],
         ["Reported last accepted", "reported_cutoff", "#495057"],
         ["Match-density boundary (exploratory)", "estimated_cutoff", "#b08900"],
-        [`${legacy ? "3-absence age-group" : "15-absence gender-pool"} scan (unverified)`, "scanned_cutoff", "#277da1"],
+        ["15-absence gender-pool scan (unverified)", "scanned_cutoff", "#277da1"],
         [unverified ? "Unverified candidate maximum" : "Reviewed attribution (conditional)", "observed_cutoff", "#e76f51"],
       ].map(([label, key, color]) => ({
         label, color,
         values: rows.map(row => {
           if (key === "manual_extra_cutoff") {
-            const extraPlaces = legacy ? qualificationAssumptions.legacyExtraPlaces : qualificationAssumptions.extraPlaces;
-            const rank = row.pool_slots + extraPlaces;
+            const factor = qualificationAssumptions.rollDownFactor;
+            const rank = row.pool_slots + Math.floor(row.pool_slots * factor + 0.5);
             const manualTime = row.manual_pool_times?.[rank - 1];
             return Number.isFinite(manualTime) ? [{ year: row.year, value: manualTime,
-              detail: `${extraPlaces} manual extra place${extraPlaces === 1 ? "" : "s"}; ${legacy ? "age-group" : "gender-pool"} rank ${rank}; allocation scenario, not observed acceptance` }] : [];
+              detail: `Factor ${factor}; ${legacy ? "age-group" : "gender-pool"} rank ${rank}; scenario, not observed acceptance` }] : [];
           }
           return Number.isFinite(row[key]) ? [{
           year: row.year, value: row[key],
-          detail: key === "estimated_cutoff" ? escapeHtml(`Exploratory match-density estimate; support range ${qualificationDuration(row.cutoff_estimate.low_time)} to ${qualificationDuration(row.cutoff_estimate.high_time)}; ${row.cutoff_estimate.sensitive ? "sensitive to match selection" : "not verified acceptance"}`) : key === "scanned_cutoff" ? escapeHtml(`${row.cutoff_scan.athlete}; ${legacy ? "age-group" : "gender-pool"} rank ${row.cutoff_scan.rank}; ${row.cutoff_scan.consecutive_absences} consecutive absences at ranks ${row.cutoff_scan.gap_start_rank} to ${row.cutoff_scan.gap_end_rank}; not verified acceptance`) : key === "reported_cutoff" ? escapeHtml(`${row.reported_cutoff_source}; reported to the ${row.reported_cutoff_precision}${row.reported_cutoff_athlete ? `; ${row.reported_cutoff_athlete}` : ""}`) : key === "observed_cutoff" ? escapeHtml(`${row.deepest_name} · ${legacy ? "age-group" : "gender-pool"} rank ${row.deepest_rank}`) : `${row.pool_slots} initial ${legacy ? "age-group" : "gender-pool"} slots`,
+          detail: key === "estimated_cutoff" ? escapeHtml(`Exploratory match-density estimate; support range ${qualificationDuration(row.cutoff_estimate.low_time)} to ${qualificationDuration(row.cutoff_estimate.high_time)}; ${row.cutoff_estimate.sensitive ? "sensitive to match selection" : "not verified acceptance"}`) : key === "scanned_cutoff" ? escapeHtml(`${row.cutoff_scan.athlete}; ${legacy ? "age-group" : "gender-pool"} rank ${row.cutoff_scan.rank}; ${row.cutoff_scan.consecutive_absences} consecutive unmatched ranks ${row.cutoff_scan.gap_start_rank} to ${row.cutoff_scan.gap_end_rank}; not verified acceptance`) : key === "reported_cutoff" ? escapeHtml(`${row.reported_cutoff_source}; reported to the ${row.reported_cutoff_precision}${row.reported_cutoff_athlete ? `; ${row.reported_cutoff_athlete}` : ""}`) : key === "observed_cutoff" ? escapeHtml(`${row.deepest_name} · ${legacy ? "age-group" : "gender-pool"} rank ${row.deepest_rank}`) : `${row.pool_slots} initial ${legacy ? "age-group" : "gender-pool"} slots`,
           }] : [];
         }),
       }));
       categoryPointChart("konaCutoffChart", categories, timeSeries, {yAxisLabel: legacy ? "Age-group raw time (HH:MM)" : "Age-graded time (HH:MM)"});
       categoryPointChart("konaRollDownChart", categories, [{
-        label: `${legacy ? "3-absence age-group" : "15-absence gender-pool"} scan · model-derived assumption`, color: "#277da1",
+        label: "15-absence gender-pool scan · model-derived assumption", color: "#277da1",
         values: rows.map(row => Number.isFinite(row.cutoff_scan?.modeled_roll_down_percent) ? [{
           year: row.year, value: row.cutoff_scan.modeled_roll_down_percent,
           detail: `(${row.cutoff_scan.rank} estimated ${legacy ? "age-group" : "gender-pool"} rank − ${row.pool_slots} initial ${legacy ? "age-group" : "pool"} slots) ÷ ${row.cutoff_scan.rank} × 100; model-derived, not observed declines`,
@@ -1240,6 +1245,40 @@
         .sort((left, right) => left - right);
       return values.length ? quantile(values, 0.5) : null;
     }
+    function standardSplitMedians(group) {
+      if (!standardSplitMedianCache.has(group)) {
+        const values = Object.fromEntries(splits.map(([, key]) => [key, []]));
+        (raceGroups()[group] || []).filter(isQualifyingEvent).forEach(eventId => {
+          const data = DATASETS[eventId];
+          data.records.forEach(row => {
+            if (!/^[MF]\d{2}-\d{2}$/.test(String(row.division ?? "").trim().toUpperCase())) return;
+            const factors = data.course_factors?.[row.year];
+            if (!factors) return;
+            splits.forEach(([, key]) => {
+              if (Number.isFinite(row[key]) && row[key] > 0 && Number.isFinite(factors[key])) {
+                values[key].push(row[key] / factors[key]);
+              }
+            });
+          });
+        });
+        standardSplitMedianCache.set(group, Object.fromEntries(splits.map(([, key]) => {
+          values[key].sort((left, right) => left - right);
+          return [key, values[key].length ? quantile(values[key], 0.5) : null];
+        })));
+      }
+      return standardSplitMedianCache.get(group);
+    }
+    function signedMinutes(seconds) {
+      if (!Number.isFinite(seconds)) return "—";
+      const minutes = seconds / 60;
+      const sign = Math.abs(minutes) < 0.05 ? "" : minutes > 0 ? "+" : "−";
+      return `${sign}${Math.abs(minutes).toFixed(1)} min`;
+    }
+    function factorComparisonText(factor, referenceSeconds) {
+      if (!Number.isFinite(factor)) return "—";
+      const minutes = Number.isFinite(referenceSeconds) ? referenceSeconds * (factor - 1) : NaN;
+      return `${signedPercent(factor)} (${signedMinutes(minutes)})`;
+    }
     function conditionsFactor(eventId, year) {
       const model = DATASETS[eventId].course_model;
       const entry = DATASETS[eventId].course_factors?.[year];
@@ -1327,7 +1366,7 @@
       const { group, model } = experimentalContext();
       const fit = model.fit || {};
       document.getElementById("experimentalStandardName").textContent = `${model.cycle || "current"}-cycle ${group === "im" ? "Kona" : "IRONMAN 70.3"} Standard`;
-      document.getElementById("experimentalFitBody").innerHTML = ["swim", "bike", "run", "overall"].map(key => {
+      document.getElementById("experimentalFitBody").innerHTML = ["swim", "t1", "bike", "t2", "run", "overall"].map(key => {
         const row = fit[key];
         if (!row) return "";
         const share = 100 * row.trimmed / (row.records + row.trimmed);
@@ -1445,7 +1484,7 @@
     }
     function renderExperimental() {
       const group = experimentalDistance.value;
-      const split = "overall";
+      const split = experimentalFactorSplit.value;
       const percentFormat = value => `${value > 0.05 ? "+" : value < -0.05 ? "−" : ""}${Math.abs(value).toFixed(1)}%`;
       const eventIds = (raceGroups()[group] || []).filter(id => Object.keys(DATASETS[id].course_factors || {}).length);
       const categories = eventIds.map(id => DATASETS[id].name);
@@ -1457,28 +1496,45 @@
         : "not estimated";
 
       const splitKeys = ["swim", "bike", "run", "overall"];
+      const referenceTimes = standardSplitMedians(group);
       const rows = eventIds.map(id => {
-        const years = Object.keys(DATASETS[id].course_factors).filter(compareYearVisible);
+        const visibleYears = Object.keys(DATASETS[id].course_factors).filter(compareYearVisible).sort();
+        const years = visibleYears;
         const conditions = years.map(year => conditionsFactor(id, year)).filter(Number.isFinite);
         const spread = conditions.length ? conditions : years.map(year => DATASETS[id].course_factors[year].overall);
         return {
           id,
           years: years.length,
+          visibleYears,
           effects: Object.fromEntries(splitKeys.map(key => [key, courseEffect(id, key)])),
           minimum: Math.min(...spread),
           maximum: Math.max(...spread),
           athletes: lowerMedian(years.map(year => DATASETS[id].course_factors[year].repeat_athletes)),
         };
       }).filter(row => row.years).sort((left, right) => left.effects.overall - right.effects.overall);
+      const comparisonRows = [...rows, {
+        id: null,
+        effects: Object.fromEntries(splitKeys.map(key => [key, 1])),
+      }].sort((left, right) => left.effects.overall - right.effects.overall);
       const rangeHeader = modelled
-        ? `<th title="Deviation of single race-years from course × season: heat, wind, non-wetsuit swims, course changes.">Race-day conditions</th>`
-        : `<th title="Fastest and slowest race-year, overall.">Overall range</th>`;
-      document.getElementById("experimentalFactorHead").innerHTML = `<tr><th>Race</th><th>Race-years</th><th>Swim</th><th>Bike</th><th>Run</th><th>Overall</th>${rangeHeader}<th title="Median number of matched athletes per race-year.">Repeat athletes / year</th></tr>`;
-      document.getElementById("experimentalFactorBody").innerHTML = rows.length ? rows.map(row => `<tr><td>${escapeHtml(DATASETS[row.id].name)}${isQualifyingEvent(row.id) ? "" : " (World Championship)"}</td><td>${row.years}</td>${splitKeys.map(key => `<td>${key === "overall" ? "<strong>" : ""}${signedPercent(row.effects[key])}${key === "overall" ? "</strong>" : ""}</td>`).join("")}<td>${row.years > 1 ? `${signedPercent(row.minimum)} to ${signedPercent(row.maximum)}` : "single race-year"}</td><td>${Number(row.athletes).toLocaleString()}</td></tr>`).join("")
-        : `<tr><td colspan="8" class="empty">No course factors available.</td></tr>`;
-      document.getElementById("experimentalFactorNote").textContent = modelled
-        ? "Split columns are season-adjusted course effects: the typical factor of each course in an average season, so races with only recent editions are not flattered by faster recent seasons. Race-day conditions show how far single race-years deviated from course × season. Sampling error is about ±0.1–0.3% per race-year."
-        : "Median across race-years. With a single race of this distance, course and season effects cannot be separated. Sampling error is about ±0.5% per race-year.";
+        ? `<th title="Deviation of single race-years from course × season: heat, wind, non-wetsuit swims, course changes.">Race-day conditions (% / min)</th>`
+        : `<th title="Fastest and slowest race-year, overall.">Overall range (% / min)</th>`;
+      document.getElementById("experimentalFactorHead").innerHTML = `<tr><th>Race</th><th>Race-years</th><th>Swim (% / min)</th><th>Bike (% / min)</th><th>Run (% / min)</th><th>Overall (% / min)</th>${rangeHeader}<th title="Median number of matched athletes per race-year.">Repeat athletes / year</th></tr>`;
+      const standardRow = `<tr class="standard-course-row"><td>Standard course (factor 1.000 reference)</td><td>—</td>${splitKeys.map(key => `<td>${factorComparisonText(1, referenceTimes[key])}</td>`).join("")}<td>—</td><td>—</td></tr>`;
+      const renderedRows = comparisonRows.map(row => {
+        if (row.id === null) return standardRow;
+        const eventName = `${DATASETS[row.id].name}${isQualifyingEvent(row.id) ? "" : " (World Championship)"}`;
+        const detailId = `experimental-course-years-${row.id}`;
+        const yearRows = row.visibleYears.map(year => {
+          const entry = DATASETS[row.id].course_factors[year];
+          return `<tr><td>${yearCell(row.id, year)}</td>${splitKeys.map(key => `<td>${factorComparisonText(entry[key], referenceTimes[key])}</td>`).join("")}</tr>`;
+        }).join("");
+        return `<tr><td><button class="course-race-toggle" type="button" aria-expanded="false" aria-controls="${detailId}" title="Show race-year factors">${escapeHtml(eventName)}</button></td><td>${row.years}</td>${splitKeys.map(key => `<td>${key === "overall" ? "<strong>" : ""}${factorComparisonText(row.effects[key], referenceTimes[key])}${key === "overall" ? "</strong>" : ""}</td>`).join("")}<td>${row.years > 1 ? `${factorComparisonText(row.minimum, referenceTimes.overall)} to ${factorComparisonText(row.maximum, referenceTimes.overall)}` : "single race-year"}</td><td>${Number(row.athletes).toLocaleString()}</td></tr><tr class="course-year-details" id="${detailId}" hidden><td colspan="8"><table class="course-year-table"><thead><tr><th>Race-year</th>${splitKeys.map(key => `<th>${splitLabel(key)} (% / min)</th>`).join("")}</tr></thead><tbody>${yearRows}</tbody></table></td></tr>`;
+      }).join("");
+      document.getElementById("experimentalFactorBody").innerHTML = `${renderedRows}${rows.length ? "" : `<tr><td colspan="8" class="empty">No race-year factors available for the selected years.</td></tr>`}`;
+      document.getElementById("experimentalFactorNote").textContent = `${modelled
+        ? "Race rows show season-adjusted course effects; expanded years show course, season and conditions combined."
+        : "Race rows show the median race-year factor; expanded years show the individual full factors."} Minute equivalents use pooled age-group median split times from qualifying, regular race-years converted to the standard course. Sampling error is about ±0.1–0.3% per race-year.`;
       renderExperimentalDetails();
 
       const seasonModel = model.season || {};
@@ -1498,7 +1554,7 @@
         document.getElementById("experimentalSeasonChart").innerHTML = `<text x="20" y="40">Season effects need at least two races of this distance</text>`;
       }
 
-      document.getElementById("experimentalFactorTitle").textContent = `Race-year difficulty · ${split}`;
+      document.getElementById("experimentalFactorTitle").textContent = `Race-year difficulty · ${splitLabel(split)}`;
       categoryPointChart(
         "experimentalFactorChart",
         categories,
@@ -1506,12 +1562,13 @@
           const entry = DATASETS[id].course_factors[year];
           if (!entry || !Number.isFinite(entry[split])) return null;
           const se = entry.se?.[split];
+          const repeats = entry.repeat_athletes_by_split?.[split];
           return {
             value: 100 * (entry[split] - 1),
-            detail: `×${entry[split].toFixed(3)}${Number.isFinite(se) ? ` ± ${(100 * se).toFixed(1)}%` : ""} · ${entry.repeat_athletes.toLocaleString()} repeat athletes`,
+            detail: `×${entry[split].toFixed(3)}${Number.isFinite(se) ? ` ± ${(100 * se).toFixed(1)}%` : ""}${Number.isFinite(repeats) && repeats > 0 ? ` · ${repeats.toLocaleString()} repeat athletes` : ""}`,
           };
         }),
-        { includeZero: true, formatValue: percentFormat, formatTick: percentFormat, minimumPadding: 1, yAxisLabel: `${split} vs. average race-year` },
+        { includeZero: true, formatValue: percentFormat, formatTick: percentFormat, minimumPadding: 1, yAxisLabel: `${splitLabel(split)} vs. average race-year` },
       );
 
       const percentage = Math.min(100, Math.max(0.1, Number(experimentalPercentile.value) || 20));
@@ -1913,7 +1970,7 @@
       if (Number.isFinite(time)) oddsTime.value = duration(time);
       oddsTimeBasis.value = "average";
       const averageBasis = oddsTimeBasis.value === "average";
-      const system = qualificationSystem;
+      const system = activeTab === "easiest" ? "current" : qualificationSystem;
       const marginText = seconds => seconds === Infinity ? "any finish" : seconds === -Infinity ? "no slot" : signedDuration(seconds);
       const percentText = factor => Number.isFinite(factor) ? `${factor >= 1 ? "+" : "−"}${Math.abs(100 * (factor - 1)).toFixed(1)}%` : "—";
       let skipped = 0;
@@ -1921,7 +1978,7 @@
         const entries = qualificationYears(eventId, system)
           .filter(year => !isModifiedCourse(eventId, year))
           .map(year => {
-            const standard = qualificationStandard(eventId, year, gender, ageGroup, system, { cutoffMode: "strict" });
+            const standard = qualificationStandard(eventId, year, gender, ageGroup, system);
             if (!standard) return null;
             const course = courseFactor(eventId, year);
             if (averageBasis && course === null) {
@@ -1987,7 +2044,8 @@
         ? `${Number.isFinite(time) ? duration(time) : "The entered time"} is treated as your time on an average course and multiplied by each race-year's overall course factor.`
         : "The entered time is compared unchanged with every race-year.";
       const skippedText = skipped ? ` ${skipped} race-year${skipped === 1 ? "" : "s"} without a course factor are left out.` : "";
-      document.getElementById("oddsRankingNote").textContent = `${basisText}${skippedText} Ranked by the share of race-years in which you qualify, then by median margin. "Needed on an average course" removes course and race-day conditions, so it is the fairest comparison of how hard each race is to qualify at; higher is easier. "Needed vs. median" compares the time needed with that race-year's median ${division} finish. Ranked on strict allocation. Strict entitlement model: declines and ceremony attendance are not observed in the results.`;
+      const fallbacks = races.flatMap(race => race.entries).filter(entry => entry.standard.cutoffSource?.startsWith("Strict fallback")).length;
+      document.getElementById("oddsRankingNote").textContent = `${basisText}${skippedText} Ranked by the share of race-years meeting the selected ${cutoffLabels[qualificationAssumptions.mode]} target, then by median margin. ${fallbacks} race-years use strict fallback; reasons are listed in the race-year details. Current rules are used in Where to Qualify. Meeting a target does not establish slot acceptance.`;
       stepShareChart(
         "oddsProbabilityChart",
         races.map(race => ({
@@ -2032,6 +2090,8 @@
     const easiestAgeGroup = document.getElementById("easiestAgeGroup");
     const easiestTime = document.getElementById("easiestTime");
     const easiestDeclines = document.getElementById("easiestDeclines");
+    const easiestOpenFilter = document.getElementById("easiestOpenFilter");
+    const easiestFinishRisk = document.getElementById("easiestFinishRisk");
     const easiestSearch = document.getElementById("easiestSearch");
     const easiestManualRace = document.getElementById("easiestManualRace");
     const easiestManualYear = document.getElementById("easiestManualYear");
@@ -2159,7 +2219,43 @@
     }
     function slotText(eventId) {
       const slots = DATASETS[eventId].qualification_slots;
-      return typeof slots === "object" ? `${slots.male} M / ${slots.female} F` : String(slots);
+      return typeof slots === "object" ? `${slots.male + slots.female} total (${slots.male} M / ${slots.female} F)` : `${slots} total`;
+    }
+    function finderMissingReasons(eventId, years, entries, gender, ageGroup) {
+      const usedYears = new Set(entries.map(entry => entry.year));
+      return years.filter(year => !usedYears.has(year)).map(year => {
+        const standard = easiestQualificationStandard(eventId, year, gender, ageGroup, "current",
+          qualificationAssumptions.mode, qualificationAssumptions.extraPlaces);
+        return {year, reason: standard?.unavailableReason || (standard ? "no expected time or course factor" : "no compatible target")};
+      });
+    }
+    function finderFieldSummary(eventId, gender, ageGroup) {
+      const event = DATASETS[eventId];
+      const division = divisionFor(gender, ageGroup);
+      const slots = event.qualification_slots;
+      const totalSlots = typeof slots === "object" ? slots.male + slots.female : slots;
+      const rows = qualificationYears(eventId, "current").filter(year => !isModifiedCourse(eventId, year)).map(year => {
+        const stats = event.division_stats?.[year] || {};
+        const group = stats[division];
+        const groups = Object.entries(stats);
+        const starters = groups.length ? groups.reduce((sum, [, value]) => sum + value.starters, 0) : null;
+        const genderGroups = groups.filter(([key]) => key.startsWith(division[0]));
+        const genderStarters = genderGroups.length ? genderGroups.reduce((sum, [, value]) => sum + value.starters, 0) : null;
+        const allocation = event.qualification.summaries.find(row => row.year === year);
+        const key = gender.toLowerCase();
+        const genderSlots = allocation ? allocation[`${key}_auto`] + (slotAllocations[eventId]?.[key] ?? allocation[`${key}_perf`]) : null;
+        const factor = courseFactor(eventId, year);
+        return {year, starters, ageGroupStarters: group?.starters, finishers: group?.finishers || 0,
+          top20: factor && Number.isFinite(group?.top_20_percent) ? group.top_20_percent / factor : null,
+          genderRatio: genderSlots > 0 && Number.isFinite(genderStarters) ? genderStarters / genderSlots : null};
+      });
+      const medianValue = key => lowerMedian(rows.map(row => row[key]).filter(Number.isFinite));
+      const strengthRows = rows.filter(row => Number.isFinite(row.top20));
+      return {years: rows.map(row => row.year), totalSlots, starters: medianValue("starters"),
+        ageGroupStarters: medianValue("ageGroupStarters"), genderRatio: medianValue("genderRatio"),
+        participantsPerSlot: totalSlots > 0 && Number.isFinite(medianValue("starters")) ? medianValue("starters") / totalSlots : null,
+        strength: medianValue("top20"), strengthYears: strengthRows.map(row => row.year),
+        strengthFinishers: strengthRows.reduce((sum, row) => sum + row.finishers, 0)};
     }
     function fillManualForm() {
       const group = easiestDistance.value;
@@ -2269,55 +2365,125 @@
         options.extraPlaces ?? qualificationAssumptions.extraPlaces, options);
       return result?.available ? result : null;
     }
+    function calibratedStandard(strict, eventId, gender, system) {
+      const base = { ...strict, strictNeeded: strict.needed, available: true, mode: "calibrated", estimatedCutoffUsed: false, cutoffPool: null };
+      const factor = qualificationAssumptions.rollDownFactor ?? 0;
+      const slots = strict.scope === "age group" ? strict.slots : strict.performanceSlots;
+      const data = DATASETS[eventId];
+      const ranked = strict.scope === "age group"
+        ? data.historical_qualification?.targets?.find(row => row.year === strict.year && row.division === strict.division)?.times
+        : (system === "historical" ? data.historical_qualification?.pools : data.qualification?.pools)?.[strict.year]?.[gender.toLowerCase()];
+      const rank = Number.isFinite(slots) && slots > 0 && Number.isFinite(factor) && factor >= 0
+        ? slots + Math.floor(slots * factor + 0.5) : null;
+      const value = rank && rank <= (ranked?.length ?? 0) ? ranked[rank - 1] : null;
+      const time = strict.scope === "age group" ? value : value?.age_graded;
+      if (!Number.isFinite(time) || (strict.scope === "gender" && (!Number.isFinite(strict.ratio) || strict.ratio <= 0 || !Number.isFinite(strict.winner)))) {
+        const reason = "no ranked finisher or compatible winner and standard at the factor rank";
+        return {...base, available: false, needed: null, factorRank: rank, unavailableReason: reason, cutoffSource: `No factor target: ${reason}`};
+      }
+      const poolEquivalent = strict.scope === "gender" ? time / strict.ratio : null;
+      return {...base, needed: strict.scope === "gender" ? Math.max(strict.winner, poolEquivalent) : time,
+        poolEquivalent, ageGraded: strict.scope === "gender" ? time : null,
+        factorRank: rank, rollDownFactor: factor, cutoffSource: `Rank factor ${factor}: ${slots} slots, rank ${rank}`};
+    }
     function easiestQualificationStandard(eventId, year, gender, ageGroup, system, mode, extraPlaces, options = {}) {
       const strict = strictQualificationStandard(eventId, year, gender, ageGroup, system, { ...options, extraPlaces: 0 });
-      const places = strict?.scope === "age group" ? qualificationAssumptions.legacyExtraPlaces ?? extraPlaces : extraPlaces;
-      const standard = mode === "places" ? strictQualificationStandard(eventId, year, gender, ageGroup, system,
-        { ...options, extraPlaces: places }) : strict;
-      if (!standard) return null;
+      if (!strict) return null;
+      if (mode === "calibrated") return calibratedStandard(strict, eventId, gender, system);
+      if (!["strict", "reported", "density", "scan", "matched"].includes(mode)) return {...strict, strictNeeded: strict.needed,
+        available: false, needed: null, mode, cutoffPool: null, unavailableReason: "unsupported cutoff method", cutoffSource: "No estimate: unsupported cutoff method"};
+      const standard = strict;
       const defaultTrace = DATASETS.im_kona?.kona_trace;
-      const target = DATASETS[eventId].historical_qualification?.targets?.find(row => row.year === year && row.division === standard.division);
-      const sourceCycle = target?.standard_cycle || target?.source?.allocation_cycle
-        || (target?.source?.cycles?.length === 1 ? target.source.cycles[0] : null);
+      const historicalRows = DATASETS[eventId].historical_qualification?.targets?.filter(row => row.year === year) || [];
+      const target = historicalRows.find(row => row.division === standard.division) || historicalRows[0];
+      const source = target?.source;
+      const sourceCycle = source?.cycles?.length === 1 && !source.other_cycles?.length ? String(source.cycles[0]) : null;
+      const originalScope = sourceCycle && source?.method === "performance" && target?.slot_scope === "gender" ? "P1"
+        : sourceCycle && source?.method === "legacy" && target?.slot_scope === "age group" ? "legacy" : null;
       const traces = Object.values(DATASETS.im_kona?.kona_traces || {latest: defaultTrace}).filter(Boolean);
       const currentCycle = DATASETS[eventId].qualification?.standard_cycle;
+      const rosterTrace = traces.find(trace => String(trace.year) === sourceCycle);
       const candidates = DATASETS[eventId].group === "im" ? traces.flatMap(trace => {
         const sourceRows = system === "current"
-          ? String(trace.counterfactual_standard_cycle) === String(currentCycle) ? trace.counterfactual_summaries || [] : []
+          ? trace.counterfactual_summaries || []
           : trace.summaries?.all || [];
         return sourceRows.filter(row => row.event_id === eventId && row.year === year && row.gender === gender
-          && (!row.slot_scope || row.slot_scope === standard.scope) && (!row.division || row.division === standard.division))
+          && (row.slot_scope !== "age group" || row.division === standard.division))
           .map(pool => ({trace, pool}));
       }) : [];
-      const compatible = system === "historical"
-        ? sourceCycle ? candidates.filter(entry => entry.trace.year === String(sourceCycle)) : []
-        : candidates.length > 1 && sourceCycle ? candidates.filter(entry => entry.trace.year === String(sourceCycle)) : candidates;
-      const trace = compatible.length === 1 ? compatible[0].trace
-        : system === "historical" && standard.scope === "age group" && !sourceCycle ? null : defaultTrace;
+      const compatible = sourceCycle ? candidates.filter(entry => String(entry.trace.year) === sourceCycle) : [];
+      const trace = compatible.length === 1 ? compatible[0].trace : null;
       const pool = compatible.length === 1 ? compatible[0].pool : null;
       const estimate = mode === "reported" ? {time: pool?.reported_cutoff} : mode === "density" ? pool?.cutoff_estimate : pool?.cutoff_scan;
       const ratio = (system === "current" ? trace?.counterfactual_standards : trace?.standards)?.[standard.division];
       const scanScope = pool?.slot_scope === "age group" ? "age-group" : "gender-pool";
       const scanLabel = pool?.cutoff_scan?.consecutive_absences
         ? `${pool.cutoff_scan.consecutive_absences}-absence ${scanScope} scan` : "Absence scan";
-      const label = mode === "reported" ? "Reported cutoff" : mode === "density" ? "Match-density boundary" : scanLabel;
+      const label = mode === "reported" ? "Reported cutoff" : mode === "density" ? "Match-density boundary"
+        : mode === "matched" ? "Matched-slot cutoff" : scanLabel;
       const evidenceCycle = (system === "current" ? trace?.counterfactual_standard_cycle : trace?.year) ?? null;
       const evidenceRoster = system === "current" ? trace?.year ?? null : null;
       const metadata = { ...standard, cutoffPool: pool, cutoffCycle: evidenceCycle, cutoffRoster: evidenceRoster, estimatedCutoffUsed: false,
         strictNeeded: strict.needed, available: true, mode,
-        cutoffSource: mode === "places" ? "Slot allocation + extra places" : "Strict allocation" };
-      if (mode === "places" || mode === "strict") return metadata;
-      const unavailable = reason => ({ ...metadata,
-        available: Boolean(qualificationAssumptions.fallback),
-        needed: qualificationAssumptions.fallback ? strict.needed : null,
-        unavailableReason: reason, cutoffSource: `${qualificationAssumptions.fallback ? "Strict fallback" : "No estimate"}: ${reason}` });
+        cutoffSource: "Strict allocation" };
+      if (mode === "strict") return {...metadata, cutoffPool: originalScope === "P1" || (system === "historical" && originalScope === "legacy"
+        && pool?.slot_scope === "age group" && pool.division === standard.division && pool.pool_slots === standard.slots) ? pool : null};
+      const unavailable = (reason, fallbackEligible = true) => {
+        const fallback = !["reported", "matched"].includes(mode) && originalScope === "P1" && fallbackEligible && qualificationAssumptions.fallback;
+        return { ...metadata, cutoffPool: null, available: Boolean(fallback),
+          needed: fallback ? strict.needed : null,
+          unavailableReason: reason, cutoffSource: `${fallback ? "Strict fallback" : "No estimate"}: ${reason}` };
+      };
+      if (!originalScope) return unavailable("unknown or ambiguous qualifying cycle and original rules", false);
+      if (mode !== "reported" && originalScope !== "P1") return unavailable("original race used age-group allocation; pool matching is unsupported", false);
+      if (mode === "reported" && system !== "historical") return unavailable("reported cutoff is historical evidence only", false);
       if (standard.scope !== "gender" && system !== "historical") return unavailable("legacy age-group rules");
       if (isModifiedCourse(eventId, year)) return unavailable("modified course");
-      if (system === "current" && !candidates.length) return unavailable(DATASETS[eventId].group === "im"
-        ? "no World Championship start list for this race-year's qualifying cycle" : "no 70.3 World Championship start list");
-      if (system === "historical" && standard.scope === "age group" && !sourceCycle) return unavailable("no confirmed compatible evidence cycle");
+      if (DATASETS[eventId].group === "703" && !candidates.length) return unavailable("no 70.3 World Championship start list");
+      if (!rosterTrace) return unavailable(`no World Championship start list for qualifying cycle ${sourceCycle}`);
+      if (!Array.isArray(rosterTrace.venues?.[gender]) || !rosterTrace.venues[gender].length) return unavailable(`no World Championship start list for qualifying cycle ${sourceCycle} (${gender})`);
       if (compatible.length > 1) return unavailable("ambiguous qualifying cycle");
+      if (!compatible.length && sourceCycle && candidates.length) return unavailable("different qualifying cycle");
+      if (!pool) return unavailable(`no matching race-year evidence for qualifying cycle ${sourceCycle}`);
+      if (pool && String(pool.kona_cycle) !== sourceCycle) return unavailable("different qualifying cycle in championship roster");
+      const expectedRankingCycle = system === "current" ? currentCycle : sourceCycle;
+      if (!expectedRankingCycle || String(pool.ranking_cycle) !== String(expectedRankingCycle)
+        || String(system === "current" ? trace.counterfactual_standard_cycle : trace.standard_cycle) !== String(expectedRankingCycle)) return unavailable("different ranking cycle");
+      if (pool.slot_scope !== standard.scope || (pool.division && pool.division !== standard.division)) return unavailable("incompatible ranking scope");
+      if (standard.scope === "gender" && system === "historical" && (target?.division !== standard.division
+        || String(target.standard_cycle) !== sourceCycle)) return unavailable("different qualifying cycle");
+      if (standard.scope === "gender" && (!Number.isFinite(standard.performanceSlots) || standard.performanceSlots <= 0
+        || standard.performanceSlots !== pool.pool_slots || !Number.isFinite(ratio) || ratio <= 0
+        || !Number.isFinite(standard.ratio) || Math.abs(standard.ratio - ratio) > 0.000001)) return unavailable("changed allocation or standard");
+      if (mode === "matched") {
+        const evidence = pool.ranking_evidence;
+        if (!Array.isArray(evidence) || !evidence.length
+          || Number.isFinite(pool.pool_size) && pool.pool_size !== evidence.length) {
+          return unavailable("incompatible matched-rank evidence", false);
+        }
+        const matchedRanks = evidence.flatMap((row, index) =>
+          Array.isArray(row) && Number.isFinite(row[2]) && row[2] > 0 && row[3] !== true
+            ? [{rank: index + 1, row}] : []);
+        const boundary = matchedRanks[standard.performanceSlots - 1];
+        if (!boundary) return unavailable(
+          `only ${matchedRanks.length} matched pool ranks for ${standard.performanceSlots} performance-pool slots`, false);
+        const [matchedTime, rankedTime] = boundary.row;
+        if (!Number.isFinite(matchedTime) || matchedTime <= 0 || !Number.isFinite(rankedTime) || rankedTime <= 0) {
+          return unavailable(`matched pool rank ${boundary.rank} has no compatible World Championship time or age-graded time`, false);
+        }
+        const ageGraded = Math.floor(rankedTime);
+        const poolEquivalent = ageGraded / ratio;
+        const needed = standard.winner === null ? Infinity : Math.max(standard.winner, poolEquivalent);
+        const rankingSource = system === "current"
+          ? `WC ${trace.year} start list ranked under ${evidenceCycle} rules`
+          : `WC ${trace.year} cycle`;
+        return {...metadata, needed, poolEquivalent, ageGraded, matchedTime,
+          matchedCutoffRank: boundary.rank, matchedPoolStarters: matchedRanks.length,
+          precision: "second", estimatedCutoffUsed: true,
+          cutoffSource: `${label}: ${rankingSource}; rank ${boundary.rank} is the ${standard.performanceSlots}th matched pool starter; ${matchedRanks.length} matched pool ranks for ${standard.performanceSlots} slots; matched WC time ${duration(matchedTime)}, age-graded cutoff ${qualificationDuration(ageGraded)}`};
+      }
       if (mode === "reported" && (!Number.isFinite(estimate?.time) || !pool?.reported_cutoff_source)) return unavailable("no documented matching reported cutoff");
+      if (mode === "scan" && (estimate?.criterion_met !== true || estimate?.consecutive_absences !== 15)) return unavailable("no complete 15-absence gender-pool scan");
       if (standard.scope === "age group") {
         if (!Number.isFinite(estimate?.time) || estimate.time <= 0) return unavailable("no matching age-group estimate");
         if (pool.slot_scope !== "age group" || pool.division !== standard.division || pool.pool_slots !== standard.slots || standard.slots <= 0) return unavailable("changed age-group allocation");
@@ -2325,12 +2491,7 @@
           precision: mode === "reported" ? pool.reported_cutoff_precision : mode === "density" ? "estimate" : "second", estimatedCutoffUsed: true,
           cutoffSource: `${label}: WC ${trace.year} cycle, ${standard.division} raw ranking (${mode === "reported" ? "documented report" : mode === "density" ? "exploratory breakpoint; target bounded by strict allocation" : "unverified"})`};
       }
-      if (system === "historical" && !DATASETS[eventId].historical_qualification?.targets?.some(row =>
-        row.year === year && row.division === standard.division && String(row.standard_cycle) === trace?.year)) {
-        return unavailable("different qualifying cycle");
-      }
       if (!Number.isFinite(estimate?.time) || estimate.time <= 0 || !Number.isFinite(ratio) || ratio <= 0) return unavailable("no matching estimate");
-      if (system !== "historical" && (standard.performanceSlots !== pool.pool_slots || Math.abs(standard.ratio - ratio) > 0.000001)) return unavailable("changed allocation or standard");
       const poolEquivalent = estimate.time / ratio;
       const modeledNeeded = standard.winner === null ? Infinity : Math.max(standard.winner, poolEquivalent);
       return { ...metadata, ratio, ageGraded: estimate.time, poolEquivalent,
@@ -2345,7 +2506,7 @@
       const densityTime = Number.isFinite(density?.time) ? `~${duration(Math.round(density.time / 60) * 60).slice(0, 5)}` : "Unknown";
       const scanTime = Number.isFinite(scan?.time) ? qualificationDuration(scan.time) : "Unknown";
       const ageGroupScope = pool.slot_scope === "age group";
-      const scanLabel = `${scan?.consecutive_absences ?? (ageGroupScope ? 3 : 15)}-absence ${ageGroupScope ? "age-group" : "gender-pool"} scan`;
+      const scanLabel = `${scan?.consecutive_absences ?? (ageGroupScope ? 5 : 15)}-absence ${ageGroupScope ? "age-group" : "gender-pool"} scan`;
       const cycle = pool.kona_cycle || DATASETS.im_kona?.kona_trace?.year;
       const ranking = pool.ranking_cycle && pool.ranking_cycle !== cycle ? ` start list ranked under ${pool.ranking_cycle} rules` : " cycle";
       return `<strong>${escapeHtml(pool.year)}</strong> · Density boundary ${densityTime}<br>${scanLabel} ${scanTime}<br><small>Exploratory match density, not acceptance; WC ${escapeHtml(cycle)}${escapeHtml(ranking)}${density?.sensitive ? "; sensitive to single-race matches" : ""}</small>`;
@@ -2360,15 +2521,105 @@
         : parseTime(easiestTypedTime);
       return { group, division, profile, transitions, averageTime };
     }
+    const EVIDENCE_PSEUDO_YEARS = 2;
+    function todayIso() {
+      return globalThis.__dashboardToday || new Date().toISOString().slice(0, 10);
+    }
+    function eventCalendar(eventId) {
+      return DATASETS.im_kona?.event_calendar?.events?.[eventId] || null;
+    }
+    // An event whose next edition has already been held this cycle is closed; an unannounced edition counts as open.
+    function isEventOpen(eventId) {
+      const next = eventCalendar(eventId)?.next_date;
+      return !next || next >= todayIso();
+    }
+    function nextRaceText(eventId) {
+      const entry = eventCalendar(eventId);
+      if (!entry) return "—";
+      if (entry.next_date) {
+        const held = entry.next_date < todayIso();
+        return `${entry.next_date}${entry.next_slots ? ` · ${entry.next_slots} slots` : ""}${held ? " · held" : ""}`;
+      }
+      const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+      return entry.typical_month ? `usually ${months[entry.typical_month - 1]} · date not announced` : "not announced";
+    }
+    function dnfRate(eventId) {
+      return DATASETS.im_kona?.dnf_rates?.[eventId]?.rate ?? 0;
+    }
+    function standardDeviation(values) {
+      if (values.length < 2) return 0;
+      const mean = values.reduce((sum, value) => sum + value, 0) / values.length;
+      return Math.sqrt(values.reduce((sum, value) => sum + (value - mean) ** 2, 0) / values.length);
+    }
+    // Shrink thin evidence toward the all-race mean, apply the finish probability and give an 80% range.
+    function applyEvidenceAdjustments(races, includeFinishRisk) {
+      const rated = races.filter(race => race.entries.length);
+      const prior = rated.length ? rated.reduce((sum, race) => sum + race.chance, 0) / rated.length : 0;
+      const spreads = rated.filter(race => race.entries.length > 1).map(race => standardDeviation(race.entries.map(entry => entry.chance)));
+      const pooledSpread = spreads.length ? spreads.reduce((sum, value) => sum + value, 0) / spreads.length : 0.2;
+      for (const race of rated) {
+        const n = race.entries.length;
+        const spread = n > 1 ? standardDeviation(race.entries.map(entry => entry.chance)) : pooledSpread;
+        const shrunk = (n * race.chance + EVIDENCE_PSEUDO_YEARS * prior) / (n + EVIDENCE_PSEUDO_YEARS);
+        const half = 1.28 * spread / Math.sqrt(n);
+        race.dnfRate = dnfRate(race.eventId);
+        const finish = includeFinishRisk ? 1 - race.dnfRate : 1;
+        race.rawChance = race.chance;
+        race.chance = shrunk * finish;
+        race.chanceLow = Math.max(0, (shrunk - half) * finish);
+        race.chanceHigh = Math.min(1, (shrunk + half) * finish);
+        race.lowEvidence = n < 3;
+      }
+      return races;
+    }
+    function renderBacktest() {
+      const container = document.getElementById("backtestContent");
+      const backtest = DATASETS.im_kona?.backtest;
+      if (!backtest) {
+        container.innerHTML = `<p class="note">No backtest data in this build.</p>`;
+        return;
+      }
+      const pct = (value, digits = 1) => Number.isFinite(value) ? `${(100 * value).toFixed(digits)}%` : "—";
+      const signed = value => Number.isFinite(value) ? `${value >= 0 ? "+" : ""}${(100 * value).toFixed(1)}%` : "—";
+      const cutoffRows = Object.entries(backtest.cutoffs.genders).map(([gender, row]) =>
+        `<tr><td>${gender === "male" ? "Men" : "Women"}</td><td>${row.n}</td><td>${signed(row.strict.bias)}</td><td>${pct(row.strict.mae)}</td><td>${signed(row.calibrated.bias)}</td><td>${pct(row.calibrated.mae)}</td></tr>`).join("");
+      const athletes = backtest.athletes;
+      const eventRows = Object.entries(athletes.by_event).map(([eventId, row]) =>
+        `<tr><td>${escapeHtml(DATASETS[eventId]?.name || eventId)}</td><td>${row.n.toLocaleString()}</td><td>${signed(row.bias)}</td><td>${pct(row.sd)}</td></tr>`).join("");
+      const reliabilityTable = (key, title) => {
+        const block = backtest.reliability[key];
+        const rows = block.bins.map(bin => `<tr><td>${Math.round(100 * bin.low)}–${Math.round(100 * bin.high)}%</td><td>${bin.n.toLocaleString()}</td><td>${pct(bin.predicted, 0)}</td>
+          <td><span class="chance"><span style="width:${Math.round(100 * bin.observed)}%"></span></span><strong>${pct(bin.observed, 0)}</strong></td><td>${signed(bin.observed - bin.predicted)}</td></tr>`).join("");
+        return `<section><h3>${title}</h3>
+          <p class="note">${block.n.toLocaleString()} athlete race-years · base rate ${pct(block.base_rate)} · Brier score ${block.brier.toFixed(4)} vs ${block.baseline_brier.toFixed(4)} for always predicting the base rate.</p>
+          <table><thead><tr><th>Predicted chance</th><th>Cases</th><th>Mean predicted</th><th>Observed share</th><th>Observed − predicted</th></tr></thead><tbody>${rows}</tbody></table></section>`;
+      };
+      container.innerHTML = `
+        <section><h2>Historical time-multiplier backtest · objective A</h2>
+          <p class="note">This historical backtest evaluates the former time-multiplier model against scan estimates. It does not evaluate or calibrate the current rank-based factor. Negative bias means the prediction was too fast (too hard).</p>
+          <table><thead><tr><th>Gender</th><th>Race-years</th><th>Strict bias</th><th>Strict error</th><th>Calibrated bias</th><th>Calibrated error</th></tr></thead><tbody>${cutoffRows}</tbody></table></section>
+        <section><h2>Athlete-level prediction · both objectives</h2>
+          <p class="note">Each repeat athlete's time in one race is predicted from their other race-years (ability × course factor). ${athletes.n.toLocaleString()} predictions for ${athletes.athletes.toLocaleString()} athletes.
+          Prediction error SD ${pct(athletes.residual_sd)} (robust ${pct(athletes.residual_robust_sd)}) versus the ${pct(athletes.model_sigma)} day-to-day σ of the model; ${pct(athletes.within_one_sigma, 0)} of results fall within ±1σ (a normal model would give 68%). The chances below are therefore more optimistic than reality where they are mid-range.</p>
+          <table><thead><tr><th>Race</th><th>Predictions</th><th>Bias</th><th>SD</th></tr></thead><tbody>${eventRows}</tbody></table></section>
+        <section><h2>Chance reliability</h2>
+          <p class="note">These historical models compare predictions with finishing at or under a standard; they do not score the rank-factor scenario. Historical-rule targets use published or reconstructed allocations, not verified slot acceptance. Only finishers are scored, so DNF risk is excluded. Repeat athletes are not representative of all starters, and "met the standard" is not the same as accepting a slot.</p>
+          ${reliabilityTable("A_strict", "A · current rules, strict gender-pool cut-off")}
+          ${reliabilityTable("A_calibrated", "A · historical time-multiplier model")}
+          ${reliabilityTable("B_age_group", "B · historical-rule age-group targets, published or reconstructed allocations")}
+        </section>`;
+    }
     function renderEasiest() {
       if (!["qtime", "easiest"].includes(activeTab)) return;
       const group = easiestDistance.value;
       const gender = easiestGender.value;
-      const eventIds = (raceGroups()[group] || []).filter(isQualifyingEvent);
-      populateAgeGroupSelect(easiestAgeGroup, compareAgeGroups(eventIds));
+      const allEventIds = (raceGroups()[group] || []).filter(isQualifyingEvent);
+      const eventIds = easiestOpenFilter.value === "open" ? allEventIds.filter(isEventOpen) : allEventIds;
+      const hiddenRaces = allEventIds.length - eventIds.length;
+      populateAgeGroupSelect(easiestAgeGroup, compareAgeGroups(allEventIds));
       const ageGroup = easiestAgeGroup.value;
       const division = divisionFor(gender, ageGroup);
-      const system = qualificationSystem;
+      const system = "current";
       easiestDeclines.disabled = dashboardContext.distance !== "im";
       const model = groupModel(group);
       const { profile, transitions: averageTransitions, averageTime } = currentAbility(group, division);
@@ -2379,7 +2630,7 @@
       document.getElementById("easiestAbilityMetric").textContent = duration(averageTime);
       const rankingBody = document.getElementById("easiestRankingBody");
       if (!Number.isFinite(averageTime)) {
-        rankingBody.innerHTML = `<tr><td colspan="13" class="empty">Enter a finish time as HH:MM:SS.</td></tr>`;
+        rankingBody.innerHTML = `<tr><td colspan="17" class="empty">Enter a finish time as HH:MM:SS.</td></tr>`;
         return;
       }
       const level = renderStrengthProfile(profile, group, division, averageTime);
@@ -2388,9 +2639,9 @@
         : null;
       const dayToDay = model.fit?.overall?.residual_sd ?? 0.036;
       const sigma = hasProfile ? dayToDay * Math.sqrt(1 + 1 / profile.used) : dayToDay;
-      const races = eventIds.map(eventId => {
-        const entries = qualificationYears(eventId, system)
-          .filter(year => !isModifiedCourse(eventId, year))
+      const unranked = eventIds.map(eventId => {
+        const years = qualificationYears(eventId, system).filter(year => !isModifiedCourse(eventId, year));
+        const entries = years
           .map(year => {
             const standard = qualificationStandard(eventId, year, gender, ageGroup, system);
             const expected = standard && predictRaceYear(eventId, year, hasProfile ? profile.splits : null, profile.transitionRatio, averageTime);
@@ -2405,9 +2656,11 @@
         const rates = entries.filter(entry => entry.standard.starters > 0).map(entry => 100 * entry.standard.qualifiers / entry.standard.starters);
         const fits = entries.map(entry => entry.fit).filter(Number.isFinite);
         return {
-          eventId, entries,
+          eventId, entries, missing: finderMissingReasons(eventId, years, entries, gender, ageGroup),
+          field: finderFieldSummary(eventId, gender, ageGroup),
           cutoffPool: entries.map(entry => entry.standard.cutoffPool).filter(Boolean).sort((left, right) => right.year.localeCompare(left.year))[0],
           estimatedYears: entries.filter(entry => entry.standard.estimatedCutoffUsed).length,
+          fallbackYears: entries.filter(entry => entry.standard.cutoffSource?.startsWith("Strict fallback")).length,
           worstMargin: entries.length ? Math.min(...entries.map(entry => entry.margin)) : null,
           bestMargin: entries.length ? Math.max(...entries.map(entry => entry.margin)) : null,
           chance: entries.length ? entries.reduce((sum, entry) => sum + entry.chance, 0) / entries.length : -Infinity,
@@ -2422,25 +2675,31 @@
           fit: fits.length ? lowerMedian(fits) : null,
           rate: rates.length ? lowerMedian(rates) : null,
         };
-      })
-        .sort((left, right) => byNumberDescending(left.chance, right.chance) || byNumberDescending(left.margin, right.margin));
+      });
+      applyEvidenceAdjustments(unranked, easiestFinishRisk.value === "on");
+      const races = unranked.sort((left, right) => byNumberDescending(left.chance, right.chance) || byNumberDescending(left.margin, right.margin));
 
       const best = races.find(race => race.entries.length);
       document.getElementById("easiestBestMetric").textContent = best ? DATASETS[best.eventId].name.replace("IRONMAN ", "") : "—";
       document.getElementById("easiestChanceMetric").textContent = best ? `${Math.round(100 * best.chance)}%` : "—";
-      const systemLabel = system === "historical" ? "historical rules, strict allocation" : "current-pool counterfactual, strict allocation";
+      const systemLabel = `A: current rules on old results · ${cutoffLabels[qualificationAssumptions.mode]}`;
       document.getElementById("easiestRankingTitle").textContent = `Where you qualify most easily · ${division} · ${systemLabel}`;
-      document.getElementById("easiestRankingHead").innerHTML = `<tr><th>Race</th><th title="Latest published allocation; estimates describe their original cycle, not this allocation.">Slots</th><th>Race-years</th><th title="Density estimate and absence scan in the race-year's compatible scope; missing or incompatible evidence is unavailable.">Density & scope-specific scan</th><th title="Margin in the race-year where you were furthest from (worst) and furthest inside (best) the strict target.">Margin range (worst – best year)</th><th title="Season-adjusted overall course effect.">Course</th><th>Your expected time</th><th>Time needed</th><th title="Median time needed divided by each race-year's course and conditions factor: the fairest comparison of how hard the target is, independent of course.">Needed on a standard course</th><th>Median margin</th><th>Target met in</th><th>Estimated chance</th><th title="Your expected time relative to same-level athletes on this course; negative suits you.">Course fit for you</th><th title="Strict allocation only, not an inferred count of accepted slots.">Allocated qualifiers / 100 starters</th></tr>`;
+      document.getElementById("easiestRankingHead").innerHTML = `<tr><th>Race</th><th>Latest published slots</th><th>Next race</th><th>Selected race-years</th><th>Median starters · all / ${division}</th><th>All starters / total slots</th><th>Gender starters / gender slots</th><th>${division} top 20% · standard course</th><th>Density & scan evidence</th><th>Margin range</th><th>Course</th><th>Your expected time</th><th>Time needed</th><th>Needed on a standard course</th><th>Median margin</th><th>Target met in</th><th>Modelled chance (80% range)</th><th>DNF risk</th><th>Evidence</th><th>Course fit</th><th>Strict projected qualifiers / 100 AG starters</th><th>Why</th></tr>`;
       rankingBody.innerHTML = races.map((race, index) => {
-        if (!race.entries.length) return `<tr><td>${escapeHtml(DATASETS[race.eventId].name)}</td><td>${slotText(race.eventId)}</td><td colspan="12">No compatible target for selected race years. Not ranked.</td></tr>`;
+        const missing = race.missing.map(item => `${escapeHtml(item.year)}: ${escapeHtml(item.reason)}`).join("; ");
+        if (!race.entries.length) return `<tr><td>${escapeHtml(DATASETS[race.eventId].name)}</td><td>${slotText(race.eventId)}</td><td>${nextRaceText(race.eventId)}</td><td colspan="19">No compatible target for selected race years. Not ranked.${missing ? ` ${missing}` : ""}</td></tr>`;
         const percent = Math.round(100 * race.chance);
         const marginValue = race.margin === Infinity ? "any finish" : race.margin === -Infinity ? "no slot" : signedDuration(race.margin);
         const rangeText = value => value === Infinity ? "any finish" : value === -Infinity ? "no slot" : signedDuration(value);
-        return `<tr><td>${index + 1}. ${escapeHtml(DATASETS[race.eventId].name)}</td><td>${slotText(race.eventId)}</td><td>${race.entries.length}</td><td>${easiestPoolEstimateCell(race.cutoffPool)}</td><td>${rangeText(race.worstMargin)} – ${rangeText(race.bestMargin)}</td><td>${signedPercent(courseEffect(race.eventId, "overall"))}</td><td>${duration(race.expected)}</td><td>${neededText(race.needed)}</td><td>${neededText(race.neededStandard)}</td><td>${marginValue}</td><td>${race.qualified} / ${race.entries.length}</td><td><span class="chance"><span style="width:${percent}%"></span></span><strong>${percent}%</strong></td><td>${race.fit === null ? "—" : signedPercent(1 + race.fit)}</td><td>${Number.isFinite(race.rate) ? race.rate.toFixed(1) : "—"}</td></tr>`;
-      }).join("") || `<tr><td colspan="13" class="empty">No qualifying race-years with course factors for this selection.</td></tr>`;
+        const field = race.field;
+        const event = DATASETS[race.eventId];
+        const slotSource = event.qualification_slot_source_url ? `<a href="${escapeHtml(event.qualification_slot_source_url)}" target="_blank" rel="noreferrer">IRONMAN</a>` : "source unavailable";
+        const why = `<details class="finder-why"><summary>${race.fallbackYears ? `${race.fallbackYears} strict fallback · ` : ""}Why</summary><div>Objective A · ${escapeHtml(cutoffLabels[qualificationAssumptions.mode])}. Target years: ${race.entries.map(entry => escapeHtml(entry.year)).join(", ")}. ${race.entries.map(entry => `${escapeHtml(entry.year)}: target ${assumptionTime(entry.standard)}, expected ${duration(entry.expected.total)}, margin ${rangeText(entry.margin)}, modelled ${Math.round(100 * entry.chance)}% (${escapeHtml(entry.standard.cutoffSource)})`).join("; ")}.${missing ? ` Excluded: ${missing}.` : ""} The race average is shrunk toward the all-race average and ${easiestFinishRisk.value === "on" ? "includes" : "excludes"} DNF risk. Range reflects variation between race-years, not a validated confidence interval. Field size and strength are descriptive, not separate chance inputs.</div></details>`;
+        return `<tr><td>${index + 1}. ${escapeHtml(event.name)}</td><td>${slotText(race.eventId)}<br><small>${escapeHtml(event.qualification_slot_cycle || "unsourced")} cycle · ${slotSource}</small></td><td>${nextRaceText(race.eventId)}</td><td>${field.years.join(", ") || "—"}</td><td>${Number.isFinite(field.starters) ? field.starters.toLocaleString() : "—"} / ${Number.isFinite(field.ageGroupStarters) ? field.ageGroupStarters.toLocaleString() : "—"}</td><td>${Number.isFinite(field.participantsPerSlot) ? field.participantsPerSlot.toFixed(1) : "—"}</td><td>${Number.isFinite(field.genderRatio) ? field.genderRatio.toFixed(1) : "—"}</td><td>${duration(field.strength)}<br><small>${field.strengthFinishers} finishers · ${field.strengthYears.join(", ") || "no data"}</small></td><td>${easiestPoolEstimateCell(race.cutoffPool)}</td><td>${rangeText(race.worstMargin)} – ${rangeText(race.bestMargin)}</td><td>${signedPercent(courseEffect(race.eventId, "overall"))}</td><td>${duration(race.expected)}</td><td>${neededText(race.needed)}</td><td>${neededText(race.neededStandard)}</td><td>${marginValue}</td><td>${race.qualified} / ${race.entries.length}</td><td><span class="chance"><span style="width:${percent}%"></span></span><strong>${percent}%</strong> <small>(${Math.round(100 * race.chanceLow)}–${Math.round(100 * race.chanceHigh)}%)</small></td><td>${(100 * race.dnfRate).toFixed(1)}%</td><td>${race.lowEvidence ? "thin · " : ""}${race.entries.length} yr</td><td>${race.fit === null ? "—" : signedPercent(1 + race.fit)}</td><td>${Number.isFinite(race.rate) ? race.rate.toFixed(1) : "—"}</td><td>${why}</td></tr>`;
+      }).join("") || `<tr><td colspan="22" class="empty">No qualifying race-years with course factors for this selection.</td></tr>`;
       document.getElementById("easiestRankingNote").textContent = `${hasProfile
         ? "Expected times are built split by split from your results and each race-year's split factors."
-        : "Expected times are your average-course time × each race-year's overall factor; add results for a split-by-split prediction and the course-fit column."} Chance per race-year = Φ(ln(needed ÷ expected) ÷ ${(100 * sigma).toFixed(1)}%), averaged over the race's race-years. This ranking uses strict allocation targets; all five cutoff approaches are compared per race-year below, and chance is modelled, not a historical acceptance probability. Slots show the latest allocation; historical mode uses each race-year's own slots. Races with few race-years (e.g. one) are much less certain than the percentage suggests.`;
+        : "Expected times are your average-course time × each race-year's overall factor; add results for a split-by-split prediction and the course-fit column."} Chance per race-year = Φ(ln(needed ÷ expected) ÷ ${(100 * sigma).toFixed(1)}%), averaged over the race's eligible race-years, shrunk toward the all-race average (two pseudo race-years), and multiplied by finish probability when DNF risk is included. Recommendations use objective A and the selected method. This is a what-if estimate, not a guaranteed likelihood; the rank factor is not calibrated or backtested. Selected years filter displayed targets and field summaries; course models, DNF risk and personal calibration retain their full training scope. Field size and strength are descriptive, not independent chance inputs.${hiddenRaces ? ` ${hiddenRaces} race(s) already held this cycle are hidden (switch "Races" to see all).` : ""}`;
 
       categoryPointChart(
         "easiestMarginChart",
@@ -2652,6 +2911,9 @@
       );
     }
     function renderQualificationCompare() {
+      const selectedSystem = qualificationSystem;
+      if (activeTab === "easiest") qualificationSystem = "current";
+      try {
       const groups = raceGroups();
       if (compareImAgeGroup.value) {
         renderQualificationCompareGroup("compareImQualification", (groups.im || []).filter(isQualifyingEvent), compareImAgeGroup.value, compareImGender.value);
@@ -2659,8 +2921,12 @@
       if (compare703AgeGroup.value) {
         renderQualificationCompareGroup("compare703Qualification", (groups["703"] || []).filter(isQualifyingEvent), compare703AgeGroup.value, compare703Gender.value);
       }
+      } finally { qualificationSystem = selectedSystem; }
     }
     function renderMeanQualificationCompare() {
+      const selectedSystem = qualificationSystem;
+      if (activeTab === "easiest") qualificationSystem = "current";
+      try {
       const eventIds = (raceGroups()[compareScatterDistance.value] || []).filter(isQualifyingEvent);
       const ageGroups = compareAgeGroups(eventIds);
       populateAgeGroupSelect(compareScatterAgeGroup, ageGroups);
@@ -2670,6 +2936,7 @@
           eventIds, compareScatterAgeGroup.value, compareScatterGender.value
         );
       }
+      } finally { qualificationSystem = selectedSystem; }
     }
     function populateAgeGroupSelect(select, ageGroups) {
       const previous = select.value;
@@ -2764,6 +3031,7 @@
       document.querySelectorAll(".tab-panel").forEach(panel => panel.classList.toggle("active", panel.id === `${activeTab}Panel`));
       updateTitle();
       if (activeTab === "experimental") renderExperimentalDetails();
+      if (activeTab === "backtest") renderBacktest();
       if (activeTab === "easiest") renderEasiestTab();
     }));
     [fromInput, toInput, searchInput].forEach(element => element.addEventListener("input", render));
@@ -2775,6 +3043,16 @@
     qualificationDeclines.addEventListener("input", renderQualification);
     qualificationLegacyDeclines.addEventListener("input", renderQualification);
     experimentalPercentile.addEventListener("input", renderExperimental);
+    experimentalFactorSplit.addEventListener("change", renderExperimental);
+    document.getElementById("experimentalFactorBody").addEventListener("click", event => {
+      const toggle = event.target.closest(".course-race-toggle");
+      if (!toggle) return;
+      const details = document.getElementById(toggle.getAttribute("aria-controls"));
+      if (!details) return;
+      const expanded = toggle.getAttribute("aria-expanded") === "true";
+      toggle.setAttribute("aria-expanded", String(!expanded));
+      details.hidden = expanded;
+    });
     [maleSlots, femaleSlots].forEach(element => element.addEventListener("change", updateSlotAllocation));
     document.getElementById("resetSlots").addEventListener("click", () => {
       delete slotAllocations[eventSelect.value];
@@ -2818,6 +3096,7 @@
     easiestGender.addEventListener("change", renderEasiestTab);
     [easiestAgeGroup, easiestDetailRace].forEach(control => control.addEventListener("change", renderEasiest));
     easiestDeclines.addEventListener("input", renderEasiest);
+    [easiestOpenFilter, easiestFinishRisk].forEach(control => control.addEventListener("change", renderEasiest));
     easiestTime.addEventListener("input", () => {
       if (!Number.isFinite(parseTime(easiestTime.value))) return;
       easiestTypedTime = easiestTime.value;

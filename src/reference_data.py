@@ -68,3 +68,7 @@ def reported_pool_cutoffs():
         tuple(entry[key] for key in keys): {k: v for k, v in entry.items() if k not in keys}
         for entry in load("reported_cutoffs.json")["cutoffs"]
     }
+
+
+def cycle_calendar():
+    return load("cycle_calendar.json")

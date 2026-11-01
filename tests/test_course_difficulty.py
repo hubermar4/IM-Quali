@@ -21,7 +21,9 @@ def record(name, race_year, year, division="M40-44", seconds=40000, gender="Male
     return {
         "name": name, "gender": gender, "country": country, "division": division,
         "race_year": race_year, "year": year,
-        "swim": seconds * 0.1, "bike": seconds * 0.5, "run": seconds * 0.4, "overall": seconds,
+        "swim": seconds * 0.1, "t1": seconds * 0.02,
+        "bike": seconds * 0.5, "t2": seconds * 0.01,
+        "run": seconds * 0.4, "overall": seconds,
     }
 
 
@@ -71,8 +73,14 @@ class EstimatorTests(unittest.TestCase):
         factors, fit = estimate_course_factors(frame, set(true_log))
         mean_log = np.mean(list(true_log.values()))
         for race_year, value in true_log.items():
-            self.assertAlmostEqual(factors[race_year]["overall"], np.exp(value - mean_log), delta=0.005)
+            for split in ("swim", "t1", "bike", "t2", "run", "overall"):
+                self.assertAlmostEqual(factors[race_year][split], np.exp(value - mean_log), delta=0.005)
             self.assertGreater(factors[race_year]["repeat_athletes"], 300)
+        self.assertIn("t1", fit)
+        self.assertIn("t2", fit)
+        for race_year in true_log:
+            self.assertGreater(factors[race_year]["repeat_athletes_by_split"]["t1"], 300)
+            self.assertGreater(factors[race_year]["repeat_athletes_by_split"]["t2"], 300)
         self.assertAlmostEqual(fit["overall"]["returning"], 1.0, delta=0.005)
         self.assertEqual(fit["overall"]["athletes"], 600)
         self.assertEqual(fit["overall"]["records"] + fit["overall"]["trimmed"], len(frame))
@@ -109,7 +117,10 @@ class CourseSeasonTests(unittest.TestCase):
         course = {"flat": 0.95, "hilly": 1.08}
         season = {"2020": 1.02, "2021": 0.98}
         factors = {
-            f"{event}:{year}": {split: course[event] * season[year] for split in ("swim", "bike", "run", "overall")}
+            f"{event}:{year}": {
+                split: course[event] * season[year]
+                for split in ("swim", "t1", "bike", "t2", "run", "overall")
+            }
             for event in course
             for year in season
             if (event, year) != ("flat", "2020")
@@ -121,6 +132,27 @@ class CourseSeasonTests(unittest.TestCase):
             self.assertAlmostEqual(courses[event]["overall"], value * scale, places=4)
         for year, value in season.items():
             self.assertAlmostEqual(seasons[year]["bike"], value / scale, places=4)
+
+    def test_separates_course_and_season_with_missing_transition_years(self):
+        course = {"flat": 0.95, "hilly": 1.08}
+        season = {"2020": 1.02, "2021": 0.98}
+        factors = {
+            f"{event}:{year}": {
+                split: course[event] * season[year]
+                for split in ("swim", "t1", "bike", "t2", "run", "overall")
+            }
+            for event in course
+            for year in season
+        }
+        del factors["flat:2020"]["t1"]
+        del factors["hilly:2021"]["t2"]
+
+        courses, seasons = course_and_season_effects(factors, set(factors))
+
+        self.assertTrue(np.isfinite(courses["flat"]["t1"]))
+        self.assertTrue(np.isfinite(courses["hilly"]["t2"]))
+        self.assertTrue(np.isfinite(seasons["2020"]["t1"]))
+        self.assertTrue(np.isfinite(seasons["2021"]["t2"]))
 
 
 if __name__ == "__main__":

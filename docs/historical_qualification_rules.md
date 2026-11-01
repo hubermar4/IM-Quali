@@ -220,6 +220,9 @@ starters (*inferred*); in 2021 and 2022 the quota was equal.
 ## Dashboard mapping
 
 - **Historical mode** uses the rule set of the race-year's cycle.
+  - A unique supported cycle is required. If the cycle cannot be established,
+    or the performance-pool standard for that cycle is unavailable, the
+    historical target is unavailable; current standards are not substituted.
   - Cycles 2017-2025 (R1-R4): age-group allocation; rank athletes inside their
     age group by raw finish time; the Nth finisher is the strict no-roll-down
     cutoff.
@@ -231,6 +234,30 @@ starters (*inferred*); in 2021 and 2022 the quota was equal.
     a race-page age-group table must not override it.
 - **Current mode** applies the latest published race allocation and standards
   to every historical field (a counterfactual).
+- Matched-slot cutoff, match-density, and 15-absence scan estimates require an actual P1 race and
+  compatible same-cycle gender-pool matches. They are unavailable as
+  qualification methods for R1-R4 races and unresolved cycles. In objective B's
+  ranked-evidence plot only, an R1-R4 race may show a descriptive density
+  boundary and five-unmatched scan in its actual age-group ranking. The matched
+  age-group rank-1 finisher is shown gold at the actual rank and raw time but is
+  excluded from the plot-only density/scan inputs and counts; this is not a P1
+  automatic-slot route. These markers are not qualification methods or results
+  and do not affect targets, rank factors, Finder chances, calibration or model
+  metrics. Matching does not establish acceptance, and missing matches do not
+  establish absence or declined slots.
+- The matched-slot cutoff ignores unmatched championship ranks and selects the
+  Nth rank with a matched result from that exact qualifying race-year, where N
+  is the compatible gender performance-pool allocation. A ranks the same-cycle
+  roster under current rules and standards; B uses the historical ranking and
+  cycle standard. Fewer than N matched ranks, or incompatible cycle, roster,
+  ranking, slots, or standard, is unavailable without strict fallback. P1
+  age-group winners are excluded from pool ranks and match counts and retain
+  their separate automatic-slot route. This boundary is not density, scan,
+  rank factor, or evidence of slot acceptance.
+- The rank-factor scenario uses initial gender-pool slots for P1 or age-group
+  slots for R1-R4, plus `floor(slots * factor + 0.5)` hypothetical positions.
+  It does not infer a finisher beyond the available ranking; P1 keeps the
+  separate automatic-winner route.
 - World Championship races (Kona, Nice) are not qualifiers and are excluded
   from qualification comparisons.
 

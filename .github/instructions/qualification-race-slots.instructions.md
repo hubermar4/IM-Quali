@@ -1,6 +1,6 @@
 ---
 description: "Use when handling any question, code change, or analysis about WHERE to qualify: which IRONMAN / IRONMAN 70.3 races were qualifying races, how many World Championship age-group slots each race offered per qualification cycle (men/women quotas), slot trends, race comparisons, race-slot data scraping or the race-slot history document."
-applyTo: "src/build_race_slot_history.py,src/scrape_qualifying_races.py,src/scrape_age_group_allocations.py,src/build_dashboard.py,docs/historical_qualification_race_slots.md,data/derived/coachcox_*,data/reference/current_slots.json,data/reference/events.json"
+applyTo: "src/build_race_slot_history.py,src/scrape_qualifying_races.py,src/scrape_age_group_allocations.py,src/build_dashboard.py,docs/historical_qualification_race_slots.md,data/derived/coachcox_*,data/reference/current_slots.json,data/reference/events.json,data/reference/cycle_calendar.json"
 ---
 
 # Qualification race slots (where to qualify)

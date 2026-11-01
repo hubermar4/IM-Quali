@@ -10,7 +10,7 @@ normalization, and a generated interactive dashboard.
 - `data/race_history/` - race result CSV files grouped by event
 - `data/gpx_tracks/` - bike-course GPX inputs
 - `data/cache/` - cached Coach Cox source pages
-- `data/reference/` - editable reference data (slots, events, standards, rule sets, modified courses, reported cut-offs)
+- `data/reference/` - editable reference data (slots, events, standards, rule sets, modified courses, reported cut-offs, announced race calendar)
 - `data/derived/` - reproducible extracted qualification datasets
 - `docs/` - qualification rules and source documentation
 - `dist/` - generated dashboard, data payload, and reports
@@ -57,20 +57,21 @@ The dashboard preserves all original analyses in four workspaces:
   split profiles, pace/speed and filtered CSV export.
 - **Compare Races:** participation, distance-specific finish/split distributions,
   age-group depth and split contributions.
-- **Qualification:** a guided four-step flow.
-  1. *Your time* - one finish time on a standard course (average qualifying
+- **Qualification:** a guided five-step flow.
+  1. *You* - shared distance, gender and age group.
+  2. *Your time* - one finish time on a standard course (average qualifying
      race-year and conditions), typed or derived split by split from past
      results, with the strength profile. Every later step uses it.
-  2. *Race difficulty* - each qualifying race as raced and converted to a
+  3. *Race difficulty* - each qualifying race as raced and converted to a
      standard course: course effects (overall/swim/bike/run), race-year
      factors, age-group medians and winners, and your predicted time.
-  3. *Qualification targets* - for the selected race: slots per year
+  4. *Qualification targets* - for the selected race: slots per year
      (automatic + gender pool, or age-group slots), strict target as raced and
      on a standard course, reported/scan/density roll-down estimates with the
-     estimated slots passed on, and your predicted margin. The five-approach
-     comparison, slot what-ifs and the World Championship start-list evidence
+    modelled scan depth, and your predicted margin. The method comparison,
+    slot what-ifs and the World Championship start-list evidence
      (Kona + Nice) are expandable sections.
-  4. *Where to qualify* - the race ranking by estimated chance, including the
+  5. *Where to qualify* - the current-rules race ranking by estimated chance, including the
      target on a standard course; historical target hits and cross-race charts
      are expandable sections.
   Rankings link to race targets and their cutoff evidence, with a return
@@ -88,14 +89,13 @@ years filter displayed data, aggregates and comparison fits, not published
 model training, personal-result calibration or Kona matching evidence.
 Race Explorer statistics remain all-athlete statistics.
 
-Qualification has one shared approach selection across its tabs: historically
-correct actual rules and data, or the current performance-pool rules applied as
-a counterfactual to historical results. Both evaluate five cutoff approaches
-together: strict allocation, manual extra places, reported last accepted,
-density estimate and a scope-aware absence scan (three unmatched starters in a
-legacy age group; fifteen in a gender performance pool).
-Manual pool extra places and legacy age-group extra places are separate inputs
-for the manual approach, not cutoff-method selectors. Targets, Race Finder and
+Qualification Targets can use historically correct rules and data or current
+performance-pool rules applied to historical results. Where to Qualify always
+uses current rules. Both share a cutoff-method selector: strict allocation,
+rank-based roll-down factor, match-density estimate, or 15-absence gender-pool
+scan. Reported last accepted remains separate evidence. Density and scan require
+an original P1 race and compatible same-cycle matches; legacy and unresolved
+cycles support no match-based estimate or strict fallback. Targets, Race Finder and
 Historical Target Hits show per-race-year evidence and mark missing or
 incompatible years. Strict fallback, when enabled, is labelled as such and is
 never presented as borrowed estimate evidence. Changed
@@ -129,9 +129,9 @@ option. Review source conflicts and missing coverage in `docs/code_review.md`.
   or explicitly labeled reconstructed allocations are fallbacks.
 - The performance-pool model reproduces the official qualifier lists exactly;
   the regression suite checks this for every performance-pool race-year.
-- Strict allocation models entitlement. Manual extra places are an explicit
-  allocation scenario; reported cutoffs, density estimates and scope-matched
-  absence scans remain separate evidence-based approaches. Actual ceremony outcomes
+- Strict allocation models entitlement. The rank factor is a hypothetical
+  allocation scenario; reported cutoffs, P1 density estimates and P1 absence
+  scans remain separate evidence-based approaches. Actual ceremony outcomes
   depend on attendance, prior qualification and slot acceptance, which are not
   available in the result files.
 - **Historical Target Hits** checks a finish time against selected race-years
@@ -144,21 +144,19 @@ option. Review source conflicts and missing coverage in `docs/code_review.md`.
   average course, shows strengths versus same-level athletes, and predicts
   your time split by split for every past race-year. Results are stored only
   in the browser.
-- **Cutoff approaches:** strict allocation, manual extra places, reported last
-  accepted, density estimate and the scope-aware absence scan are displayed together.
-  Manual extra places extend the matching pool or legacy age-group allocation;
-  they do not select or replace an evidence method.
-  Historical legacy estimates use raw finish times ranked within the actual
-  age group, including its winner and its recorded, published or explicitly
-  reconstructed allocation. Current gender-pool estimates use the matching
-  Kona-cycle standard to convert age-graded time, retaining the winner route.
-  In current mode, each race-year's density and scan estimates use the start
-  list of the Kona championship that race-year actually qualified for (for
-  example Austria 2017 is compared with the Kona 2017 starters), re-ranked
-  under the current rules and latest allocation. Race-years without a local
-  Kona start list for their cycle show no estimate.
-  Legacy scans rank raw times within the selected age group and stop after
-  three consecutive unmatched starters; gender-pool scans use fifteen.
+- **Cutoff approaches:** strict allocation, rank factor, P1 match density and
+  P1 15-absence scan are compared alongside separately reported last-accepted
+  evidence. For `f >= 0`, the factor targets rank
+  `slots + floor(slots * f + 0.5)`; 30 slots with factors 0, 1 and 2 target
+  ranks 30, 60 and 90. The default is 0, values above 2 are allowed, and a
+  rank beyond available finishers has no extrapolated time. The P1 gender pool
+  excludes automatic winner slots and retains the separate winner route;
+  historical legacy scenarios use raw age-group ranks and their actual slots.
+  The factor is not calibrated by the old time-multiplier model or its backtest.
+  For actual P1 race-years, objective A uses the compatible championship
+  roster re-ranked under current rules; objective B uses its historical pool,
+  allocation and standard. Legacy and unknown races never supply pool-match
+  estimates, even when strict fallback is enabled.
   Reported cutoffs appear only when documented for the same scope and cycle.
   Estimates cannot cross ranking scopes, allocation changes or incompatible
   cycles. Missing or incompatible editions are marked individually; strict
@@ -184,7 +182,7 @@ finish-time distribution is displayed. Qualification plots and historical World
 Championship allocations live in **Qualification**, not Compare Races. Shared
 year buttons filter plots, regression fits and aggregated summaries.
 
-**World Championship evidence** (step 3) supports available championship cycles
+**World Championship evidence** (step 4) supports available championship cycles
 2017-2019 and 2022-2026, with a cycle selector; legacy cycles use the shared
 age group. There are no local 2020/2021 championship starter fields. In
 2023-2025 the championship was split between Kona and Nice
@@ -192,9 +190,8 @@ age group. There are no local 2020/2021 championship starter fields. In
 are combined per championship year, so both genders are covered from 2022 on.
 Nice also appears as a non-qualifying race in Race Explorer and Compare Races.
 Missing qualifying results or incompatible allocations remain explicit
-coverage gaps. Estimates do not extend to 70.3 races. "Slots passed on" in
-step 3 is the absence-scan rank minus allocated slots and is only reported when
-the starters were selected under the same ranking rules.
+coverage gaps. Match-based estimates do not extend to 70.3 races. Scan depth
+in step 4 is the estimated rank minus allocated slots, not a count of declines.
 
 The trace links age-group starters (including DNFs, excluding DNS and
 professionals) to the selected qualifying-cycle race list, including prior-year
@@ -217,11 +214,10 @@ These references do not automatically attribute athletes to races or establish
 declined-slot counts. The article's gender ranks include podium qualifiers and
 must not be substituted for performance-pool ranks.
 
-Strict allocation, manual extra places, reported last accepted, density and the
-scope-aware absence scan are shown together, including for races with reported cutoffs.
-The manual target uses the selected number of extra places in the corresponding
-pool or legacy age-group ranking. None replaces a reported reference or
-automatically attributes a slot source.
+Strict allocation and rank factor are available for legacy and P1 races;
+P1 density and scan estimates and reported last-accepted evidence are shown
+separately where compatible. A matched starter does not prove acceptance, and
+an unmatched rank does not prove absence or a decline.
 
 **Density estimate:** an exploratory two-rate Bernoulli model
 estimates the pool rank where Kona-starter match density drops. It requires at
@@ -236,20 +232,13 @@ data in all evidence modes, are rounded to minutes, never override reported
 references and do not establish acceptance or declined-slot counts. Modified
 courses are marked; Frankfurt 2026's times are not full-distance targets.
 
-**Scope-aware absence scan:** scan the ordered ranking immediately after the
-last fixed allocation. A matched Kona starter resets the absence counter. The
-first three consecutive unmatched athletes stop a legacy age-group scan; the
-first fifteen stop a current gender-pool scan. The last matched athlete before
-that run supplies the estimate. Legacy scans use raw age-group finish times;
-pool scans use age-graded performance-pool times. The summary reports the
-matching rank scope, athlete, time and stopping-gap ranks. Matches after the gap
-cannot extend the estimate. If no match occurs after the fixed allocation, the
-last matched athlete within it is used. No preceding match, no initial slots or
-an incomplete trailing gap leaves the cutoff unknown. All compatible
-Kona-starter matches count, including multi-race candidates; automatic
-age-group winners and Kona DNS do not. The `scan_pool_cutoff` helper accepts a
-different `consecutive_absences` threshold; the dashboard uses 3 for legacy
-age-group scope and 15 for gender-pool scope.
+**P1 absence scan:** scan the compatible gender-pool ranking immediately after
+the last fixed allocation. A matched championship starter resets the counter;
+15 consecutive unmatched ranks stop the scan. The last matched athlete before
+that run supplies the estimate only if that match is beyond the allocation.
+No post-allocation match, no initial slots or an incomplete trailing gap leaves
+the cutoff unknown. All compatible starter matches count, including multi-race
+candidates; automatic age-group winners and championship DNS do not.
 Missing matches or special-entry routes can make this heuristic stop too early
 or too late. Absence does not prove that a slot was not offered or was declined.
 When a rank and positive initial slot count exist, the dashboard also plots the

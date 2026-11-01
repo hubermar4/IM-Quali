@@ -108,6 +108,12 @@ class DashboardDataTests(unittest.TestCase):
         self.assertGreater(kona_2022["female_finishers"], 1000)
         self.assertGreater(kona_2022["male_finishers"], 2000)
 
+    def test_age_group_top_twenty_threshold_uses_valid_finishers(self):
+        stats = self.datasets["im_austria"]["division_stats"]["2017"]["M30-34"]
+        self.assertGreater(stats["finishers"], 0)
+        self.assertLessEqual(stats["winner"], stats["top_20_percent"])
+        self.assertLessEqual(stats["top_20_percent"], stats["median"])
+
     def test_world_championship_has_no_qualification_estimate(self):
         kona = self.datasets["im_kona"]
         self.assertFalse(kona["qualifying"])
@@ -124,6 +130,11 @@ class DashboardDataTests(unittest.TestCase):
                 for split in ("swim", "bike", "run", "overall"):
                     self.assertTrue(0.8 < entry[split] < 1.25, f"{label} {split}")
                 self.assertGreaterEqual(entry["repeat_athletes"], 150, label)
+        for split in ("t1", "t2"):
+            values = [entry[split] for dataset in self.datasets.values()
+                      for entry in dataset["course_factors"].values() if split in entry]
+            self.assertTrue(values, split)
+            self.assertTrue(all(math.isfinite(value) and value > 0 for value in values), split)
 
     def test_course_factors_average_one_over_qualifying_race_years(self):
         for group in ("im", "703"):
@@ -145,10 +156,12 @@ class DashboardDataTests(unittest.TestCase):
     def test_course_model_exports_fit_and_age_standards(self):
         for event_id in ("im_austria", "im_703_zellamsee"):
             model = self.datasets[event_id]["course_model"]
-            for split in ("swim", "bike", "run", "overall"):
+            for split in ("swim", "t1", "bike", "t2", "run", "overall"):
                 fit = model["fit"][split]
-                self.assertGreater(fit["records"], fit["athletes"], event_id)
-                self.assertLess(fit["trimmed"], 0.05 * fit["records"], event_id)
+                self.assertGreater(fit["records"], 0, event_id)
+                if split not in ("t1", "t2"):
+                    self.assertGreater(fit["records"], fit["athletes"], event_id)
+                    self.assertLess(fit["trimmed"], 0.05 * fit["records"], event_id)
                 self.assertTrue(0 < fit["residual_sd"] < fit["trim_limit"], event_id)
             standards = model["standards"]
             self.assertEqual(standards["M40-44"] > standards["M50-54"], True, event_id)
@@ -178,6 +191,23 @@ class DashboardDataTests(unittest.TestCase):
             if row["slot_scope"] == "gender"
         }
         self.assertEqual(cycles, {"2025": "2026", "2026": "2027"})
+
+    def test_counterfactual_winners_are_separate_from_performance_pool_metrics(self):
+        winner_matches = []
+        for trace in self.datasets["im_kona"].get("kona_traces", {}).values():
+            self.assertIn("counterfactual_winners", trace)
+            for winner in trace["counterfactual_winners"]:
+                for match in winner["matches"]:
+                    self.assertEqual(match["initial_slot"], "Automatic winner")
+                    self.assertIsNone(match["pool_rank"])
+                    summary = next(row for row in trace["counterfactual_summaries"]
+                                   if row["event_id"] == match["event_id"] and row["year"] == match["year"]
+                                   and row["gender"] == winner["gender"])
+                    self.assertEqual(summary["slot_scope"], "gender")
+                    plotted_matches = sum(1 for point in summary["ranking_evidence"] if point[2] > 0)
+                    self.assertEqual(summary["matched_pool_starters"], plotted_matches)
+                    winner_matches.append(match)
+        self.assertTrue(winner_matches, "expected at least one matched automatic winner in current-rule re-ranking")
 
 
 if __name__ == "__main__":

@@ -14,7 +14,7 @@ import numpy as np
 import pandas as pd
 
 
-SPLITS = ("swim", "bike", "run", "overall")
+SPLITS = ("swim", "t1", "bike", "t2", "run", "overall")
 AGE_GROUP_PATTERN = r"^[MF](\d{2})-\d{2}$"
 TRIM_SCALE = 4.0
 
@@ -147,6 +147,7 @@ def estimate_course_factors(frame, baseline_race_years, age_ratio=None):
             entry["se"][split] = (
                 round(float(spread["std"][index] / np.sqrt(count)), 5) if count > 1 else None
             )
+            entry.setdefault("repeat_athletes_by_split", {})[split] = int(count)
             if split == "overall":
                 entry["repeat_athletes"] = int(count)
     return factors, fit
@@ -161,17 +162,24 @@ def course_and_season_effects(factors, baseline_race_years, iterations=1000, tol
     average season. Needs at least two events sharing seasons to be meaningful.
     """
     labels = list(factors)
-    event_codes, events = pd.factorize(pd.Series([label.split(":")[0] for label in labels]))
-    season_codes, seasons = pd.factorize(pd.Series([label.split(":")[1] for label in labels]))
-    baseline = np.array([label in baseline_race_years for label in labels])
-    event_counts = np.bincount(event_codes)
-    season_counts = np.bincount(season_codes)
+    events = list(dict.fromkeys(label.split(":")[0] for label in labels))
+    seasons = list(dict.fromkeys(label.split(":")[1] for label in labels))
     course = {event: {} for event in events}
     season = {year: {} for year in seasons}
     for split in SPLITS:
-        values = np.log([factors[label][split] for label in labels])
-        course_effect = np.zeros(len(events))
-        season_effect = np.zeros(len(seasons))
+        split_labels = [label for label in labels if split in factors[label]]
+        if not split_labels:
+            continue
+        event_codes, split_events = pd.factorize(pd.Series([label.split(":")[0] for label in split_labels]))
+        season_codes, split_seasons = pd.factorize(pd.Series([label.split(":")[1] for label in split_labels]))
+        baseline = np.array([label in baseline_race_years for label in split_labels])
+        if not baseline.any():
+            raise ValueError(f"no baseline race-year has {split} factors")
+        event_counts = np.bincount(event_codes)
+        season_counts = np.bincount(season_codes)
+        values = np.log([factors[label][split] for label in split_labels])
+        course_effect = np.zeros(len(split_events))
+        season_effect = np.zeros(len(split_seasons))
         for _ in range(iterations):
             updated_course = np.bincount(event_codes, values - season_effect[season_codes]) / event_counts
             updated_season = np.bincount(season_codes, values - updated_course[event_codes]) / season_counts
@@ -183,8 +191,8 @@ def course_and_season_effects(factors, baseline_race_years, iterations=1000, tol
             if change < tolerance:
                 break
         course_effect = np.bincount(event_codes, values - season_effect[season_codes]) / event_counts
-        for index, event in enumerate(events):
+        for index, event in enumerate(split_events):
             course[event][split] = round(float(np.exp(course_effect[index])), 5)
-        for index, year in enumerate(seasons):
+        for index, year in enumerate(split_seasons):
             season[year][split] = round(float(np.exp(season_effect[index])), 5)
     return course, season
