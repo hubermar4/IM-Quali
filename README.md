@@ -92,10 +92,14 @@ Race Explorer statistics remain all-athlete statistics.
 Qualification Targets can use historically correct rules and data or current
 performance-pool rules applied to historical results. Where to Qualify always
 uses current rules. Both share a cutoff-method selector: strict allocation,
-rank-based roll-down factor, match-density estimate, or 15-absence gender-pool
-scan. Reported last accepted remains separate evidence. Density and scan require
-an original P1 race and compatible same-cycle matches; legacy and unresolved
-cycles support no match-based estimate or strict fallback. Targets, Race Finder and
+rank-based roll-down factor, matched-slot cutoff, match-density estimate, or
+15-absence gender-pool scan. Reported last accepted remains separate evidence.
+Density and scan require an original P1 race and compatible same-cycle matches.
+The matched-slot cutoff also covers known R1-R4 race-years: current rules use
+the re-ranked same-cycle roster; historical rules take the Nth matched rank in
+the actual age-group ranking (N = age-group slots, a matched winner counts).
+Unresolved cycles support no match-based estimate, and legacy races no strict
+fallback. Targets, Race Finder and
 Historical Target Hits show per-race-year evidence and mark missing or
 incompatible years. Strict fallback, when enabled, is labelled as such and is
 never presented as borrowed estimate evidence. Changed

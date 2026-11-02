@@ -516,16 +516,7 @@
         : " Current rules and the latest race allocation are applied to every historical field.";
       document.getElementById("qualificationNote").textContent = `${dataset().qualification_note} The ${standardName} cutoff is age-graded; pool equivalent and time-needed columns are raw ${prefix}${ageGroup} finish times (${ratioText}).${overrideText}`;
       document.getElementById("qualificationTableTitle").textContent = `Qualification estimate by year · ${prefix}${ageGroup}`;
-      document.getElementById("qualificationChartTitle").textContent = `Time needed to qualify · ${prefix}${ageGroup}`;
       const years = summaries.map(row => row.year);
-      const finite = value => Number.isFinite(value) ? value : null;
-      const series = [
-        { label: `${prefix}${ageGroup} time needed`, color: "#277da1", values: summaries.map(row => finite(standardFor(row, gender, ageGroup)?.needed)) },
-        { label: `${prefix}${ageGroup} rank factor ${factor}`, color: "#e76f51", values: summaries.map(row => { const strict = standardFor(row, gender, ageGroup); return finite(strict && calibratedStandard(strict, eventSelect.value, gender, "current").needed); }) },
-        { label: "Selected cutoff target", color: "#2a9d8f", values: summaries.map(row => finite(qualificationStandard(eventSelect.value, row.year, gender, ageGroup, "current")?.needed)) },
-      ];
-      lineChart("qualificationChart", years, series);
-      const summaryByYear = Object.fromEntries(summaries.map(row => [row.year, row]));
       renderAgeGroupNeededChart(years, gender, (year, rowAgeGroup) => qualificationStandard(eventSelect.value, year, gender, rowAgeGroup, "current"));
     }
     function historicalGenderSlots(year, gender) {
@@ -618,14 +609,6 @@
         : "";
       document.getElementById("qualificationNote").textContent = `Historical mode uses each race-year's verified qualifying cycle, allocation and standard. Legacy years use official, published or reconstructed age-group allocations. The factor ${factor} adds hypothetical positions to the applicable rank. Race-years with ambiguous cycles are unavailable.${unavailable}`;
       document.getElementById("qualificationTableTitle").textContent = `Historical qualification by year · ${prefix}${ageGroup}`;
-      document.getElementById("qualificationChartTitle").textContent = `Historical time needed and roll-down · ${prefix}${ageGroup}`;
-      const finite = value => Number.isFinite(value) ? value : null;
-      const series = [
-        { label: `${prefix}${ageGroup} time needed`, color: "#277da1", values: years.map(year => finite(standardFor(year, gender, ageGroup)?.needed)) },
-        { label: `${prefix}${ageGroup} rank factor ${factor}`, color: "#e76f51", values: years.map(year => finite(standardFor(year, gender, ageGroup, true)?.needed)) },
-        { label: "Selected cutoff target", color: "#2a9d8f", values: years.map(year => finite(qualificationStandard(eventSelect.value, year, gender, ageGroup, "historical")?.needed)) },
-      ];
-      lineChart("qualificationChart", years, series);
       renderAgeGroupNeededChart(years, gender, (year, rowAgeGroup) => qualificationStandard(eventSelect.value, year, gender, rowAgeGroup, "historical"));
     }
     function renderQualification() {
@@ -2435,7 +2418,10 @@
           unavailableReason: reason, cutoffSource: `${fallback ? "Strict fallback" : "No estimate"}: ${reason}` };
       };
       if (!originalScope) return unavailable("unknown or ambiguous qualifying cycle and original rules", false);
-      if (mode !== "reported" && originalScope !== "P1") return unavailable("original race used age-group allocation; pool matching is unsupported", false);
+      // R1-R4 matched-slot cutoff: A re-ranks the same-cycle roster in the current pool; B uses the actual age-group ranking.
+      const currentLegacyMatched = mode === "matched" && system === "current" && originalScope === "legacy";
+      const historicalLegacyMatched = mode === "matched" && system === "historical" && originalScope === "legacy" && standard.scope === "age group";
+      if (mode !== "reported" && originalScope !== "P1" && !currentLegacyMatched && !historicalLegacyMatched) return unavailable("original race used age-group allocation; pool matching is unsupported", false);
       if (mode === "reported" && system !== "historical") return unavailable("reported cutoff is historical evidence only", false);
       if (standard.scope !== "gender" && system !== "historical") return unavailable("legacy age-group rules");
       if (isModifiedCourse(eventId, year)) return unavailable("modified course");
@@ -2461,6 +2447,23 @@
           || Number.isFinite(pool.pool_size) && pool.pool_size !== evidence.length) {
           return unavailable("incompatible matched-rank evidence", false);
         }
+        if (historicalLegacyMatched) {
+          const slots = standard.slots;
+          if (pool.division !== standard.division || !Number.isFinite(slots) || slots <= 0 || pool.pool_slots !== slots) {
+            return unavailable("changed age-group allocation", false);
+          }
+          // R1-R4 had no separate winner route: a matched age-group winner holds rank 1 and counts.
+          const matchedRanks = evidence.flatMap((row, index) =>
+            Array.isArray(row) && (Number.isFinite(row[2]) && row[2] > 0 || row[3] === true) ? [{rank: index + 1, row}] : []);
+          const boundary = matchedRanks[slots - 1];
+          if (!boundary) return unavailable(`only ${matchedRanks.length} matched age-group ranks for ${slots} age-group slots`, false);
+          const matchedTime = boundary.row[0];
+          if (!Number.isFinite(matchedTime) || matchedTime <= 0) return unavailable(`matched age-group rank ${boundary.rank} has no finish time`, false);
+          return {...metadata, needed: matchedTime, ageGraded: null, poolEquivalent: null, matchedTime,
+            matchedCutoffRank: boundary.rank, matchedPoolStarters: matchedRanks.length,
+            precision: "second", estimatedCutoffUsed: true,
+            cutoffSource: `${label}: WC ${trace.year} cycle, ${standard.division} raw age-group ranking; rank ${boundary.rank} is matched age-group finisher ${slots} of ${matchedRanks.length} for ${slots} age-group slots (a matched age-group winner counts); finish ${duration(matchedTime)}`};
+        }
         const matchedRanks = evidence.flatMap((row, index) =>
           Array.isArray(row) && Number.isFinite(row[2]) && row[2] > 0 && row[3] !== true
             ? [{rank: index + 1, row}] : []);
@@ -2480,7 +2483,7 @@
         return {...metadata, needed, poolEquivalent, ageGraded, matchedTime,
           matchedCutoffRank: boundary.rank, matchedPoolStarters: matchedRanks.length,
           precision: "second", estimatedCutoffUsed: true,
-          cutoffSource: `${label}: ${rankingSource}; rank ${boundary.rank} is the ${standard.performanceSlots}th matched pool starter; ${matchedRanks.length} matched pool ranks for ${standard.performanceSlots} slots; matched WC time ${duration(matchedTime)}, age-graded cutoff ${qualificationDuration(ageGraded)}`};
+          cutoffSource: `${label}: ${rankingSource}; rank ${boundary.rank} is the ${standard.performanceSlots}th matched pool starter; ${matchedRanks.length} matched pool ranks for ${standard.performanceSlots} slots; matched WC time ${duration(matchedTime)}, age-graded cutoff ${qualificationDuration(ageGraded)}${currentLegacyMatched ? "; original R1-R4 race: these starters qualified through age-group slots" : ""}`};
       }
       if (mode === "reported" && (!Number.isFinite(estimate?.time) || !pool?.reported_cutoff_source)) return unavailable("no documented matching reported cutoff");
       if (mode === "scan" && (estimate?.criterion_met !== true || estimate?.consecutive_absences !== 15)) return unavailable("no complete 15-absence gender-pool scan");

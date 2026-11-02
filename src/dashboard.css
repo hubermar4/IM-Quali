@@ -103,23 +103,36 @@
     .chart-tooltip { position: absolute; z-index: 8; display: none; pointer-events: none; min-width: 125px; max-width: min(320px, calc(100% - 8px)); padding: 8px 10px; color: white; background: rgba(21,35,30,.96); border-radius: 3px; box-shadow: 0 4px 14px rgba(21,35,30,.2); font-size: 12px; line-height: 1.35; }
     .chart-tooltip strong { display: block; color: #f2cc66; font-size: 11px; }
     .evidence-scroll { overflow-x: auto; container-type: inline-size; }
-    #targetEvidenceChart { min-width: 700px; }
-    .evidence-year { padding: 14px 0; border-bottom: 1px solid var(--line); }
-    .evidence-year h3 { margin: 0; font-size: 14px; }
-    .evidence-year h3, .evidence-year > .note { position: sticky; left: 0; width: min(100%, 100cqi); }
-    .evidence-legend { position: sticky; left: 0; width: min(100%, 100cqi); box-sizing: border-box; display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 290px), 1fr)); gap: 5px 16px; padding: 0; margin: 8px 0; list-style: none; font-size: 12px; line-height: 1.4; }
-    .evidence-legend li { min-width: 0; overflow-wrap: anywhere; }
-    .evidence-swatch { display: inline-block; width: 18px; margin-right: 6px; border-top: 3px solid var(--marker-color); vertical-align: middle; }
-    .evidence-winner-list { position: sticky; left: 0; width: min(100%, 100cqi); box-sizing: border-box; display: flex; flex-wrap: wrap; gap: 5px 16px; padding: 0; margin: 6px 0 10px; list-style: none; font-size: 12px; line-height: 1.4; }
-    .evidence-winner-list li { min-width: 0; overflow-wrap: anywhere; }
-    .evidence-winner-swatch { display: inline-block; width: 9px; height: 9px; margin-right: 6px; border-radius: 50%; background: #d4a017; vertical-align: middle; }
-    .evidence-winner-role { display: block; margin-left: 15px; color: var(--muted); font-size: 11px; }
-    .evidence-winner-marker { cursor: help; }
-    .evidence-winner-marker:focus circle { stroke: var(--ink); stroke-width: 2; }
-    svg.evidence-chart { min-height: 0; height: auto; aspect-ratio: 1000 / 260; }
+    #targetEvidenceChart { min-width: 760px; }
+    .chart-heading .binary-label { display: inline-flex; align-items: center; gap: 7px; color: var(--ink); font-size: 12px; font-weight: 600; text-transform: none; cursor: pointer; }
+    #targetEvidencePlot .chart-heading { align-items: center; }
+    .evidence-key { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 18px; padding: 10px 0 12px; margin: 10px 0 0; border-top: 1px solid var(--line); list-style: none; color: var(--muted); font-size: 12px; }
+    .evidence-key li { display: inline-flex; align-items: center; gap: 6px; }
+    .evidence-key svg { width: 14px; height: 14px; }
+    .evidence-key .evidence-swatch { width: 24px; height: 8px; margin: 0; }
+    .evidence-band { display: inline-block; width: 14px; height: 12px; background: var(--band); opacity: .35; }
+    .evidence-year { padding: 16px 0 18px; border-top: 1px solid var(--line); }
+    .evidence-year-head, .evidence-year > .note { position: sticky; left: 0; width: min(100%, 100cqi); }
+    .evidence-year-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 14px; }
+    .evidence-year-head h3 { margin: 0; font-family: Georgia, "Times New Roman", serif; font-size: 18px; font-weight: 500; font-variant-numeric: tabular-nums; }
+    .evidence-year-head span { color: var(--muted); font-size: 12px; }
+    svg.evidence-chart { min-height: 0; height: auto; aspect-ratio: 1000 / 154; margin: 8px 0 6px; }
+    .evidence-swatch { display: inline-block; width: 24px; height: 8px; margin-right: 8px; vertical-align: middle; }
+    .evidence-methods { font-size: 12px; }
+    .evidence-methods th { position: static; padding: 6px 14px 6px 0; background: transparent; border-bottom: 1px solid var(--line-strong); }
+    .evidence-methods td, .evidence-methods td:first-child { position: static; padding: 6px 14px 6px 0; background: transparent !important; border-bottom: 1px solid #e6ebe7; font-weight: 400; }
+    .evidence-methods tbody tr:last-child td { border-bottom: 1px solid #e6ebe7; }
+    .evidence-methods td:first-child { font-weight: 650; }
+    .evidence-methods .num { text-align: right; }
+    .evidence-methods .basis { width: 100%; min-width: 280px; padding-right: 0; color: var(--muted); white-space: normal; }
+    .evidence-methods tr.plot-only td { color: var(--muted); font-style: italic; }
     .evidence-point { cursor: crosshair; }
     .evidence-point:focus { outline: none; stroke: var(--ink); stroke-width: 2; }
     #targetEvidenceTooltip { position: fixed; z-index: 100; pointer-events: none; max-width: min(320px, calc(100vw - 8px)); padding: 8px 10px; color: white; background: #15231e; border-radius: 3px; font-size: 12px; line-height: 1.4; overflow-wrap: anywhere; }
+    #targetRaceSelector .event-control { padding: 0; margin: 0 0 10px; background: none; border: 0; }
+    #qualificationPanel > #qualificationNote { margin: 0 0 6px; padding: 0; color: var(--muted); background: none; border: 0; }
+    #targetOverview .metric { display: flex; flex-direction: column; justify-content: space-between; }
+    #targetOverview td { vertical-align: top; }
     .chart-subtitle { margin: 20px 0 0; font-size: 13px; font-weight: 800; color: var(--ink); }
     .method { padding: 14px 18px; background: var(--panel); border: 1px solid var(--line); border-radius: 4px; font-size: 13px; line-height: 1.55; }
     .method summary { cursor: pointer; font-weight: 800; }
@@ -151,6 +164,7 @@
       section { margin-top: 25px; }
       h2 { font-size: 18px; }
       .chart-heading { align-items: stretch; flex-direction: column; }
+      #targetEvidencePlot .chart-heading { align-items: flex-start; }
       .chart-controls { width: 100%; }
       .chart-controls label { flex: 1 1 0; }
       .chart-controls select { width: 100%; min-width: 0; }

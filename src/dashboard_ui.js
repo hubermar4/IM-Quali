@@ -5,7 +5,7 @@ const cutoffLabels = {strict: "Strict allocation", matched: "Matched-slot cutoff
 const cutoffApproaches = [
   {mode: "strict", label: cutoffLabels.strict, color: "#006d77"},
   {mode: "matched", label: cutoffLabels.matched, color: "#d1495b"},
-  {mode: "calibrated", label: cutoffLabels.calibrated, color: "#2a9d8f"},
+  {mode: "calibrated", label: cutoffLabels.calibrated, color: "#913d70"},
   {mode: "reported", label: cutoffLabels.reported, color: "#495057"},
   {mode: "density", label: cutoffLabels.density, color: "#b08900"},
   {mode: "scan", label: cutoffLabels.scan, color: "#277da1"},
@@ -218,22 +218,15 @@ function renderSelectedQualification() {
   const standards = Object.fromEntries(years.map(year => [year, Object.fromEntries(approaches.map(({mode}) => [
     mode, approachStandard(eventId, year, gender, ageGroup, qualificationSystem, mode),
   ]))]));
-  const evidenceNote = `<p class="note">Matched-slot cutoff requires an original P1 race and compatible same-cycle championship matches. ${qualificationSystem === "current"
-    ? "A ranks that roster under current rules."
-    : "B uses the race-year's historical pool ranking and standard."} It uses the Nth matched pool rank, where N is the performance-pool slot count; fewer than N matches or incompatible cycle, ranking, slots, or standard is unavailable, with no strict fallback. This boundary is not evidence of slot acceptance. Density and scan also require an original P1 race; A re-ranks its compatible roster under current rules.</p>`;
+  const evidenceNote = `<p class="note">Matched-slot cutoff uses the Nth matched pool rank of the compatible same-cycle championship roster, where N is the performance-pool slot count. ${qualificationSystem === "current"
+    ? "A ranks that roster under current rules, for original P1 races and for known R1-R4 race-years; in R1-R4 years those starters qualified through age-group slots."
+    : "B uses the race-year's historical pool ranking and standard for original P1 races; for R1-R4 race-years it takes the Nth matched rank in the actual age-group ranking (N = age-group slots), counting a matched age-group winner."} Fewer than N matches or incompatible cycle, ranking, slots, or standard is unavailable, with no strict fallback. This boundary is not evidence of slot acceptance. Density and scan require an original P1 race; A re-ranks its compatible roster under current rules.</p>`;
   container.innerHTML = `<h2>Targets by approach · ${escapeHtml(divisionFor(gender, ageGroup))}</h2>
     <p class="note">Methods are evaluated independently for each selected race year. Scan labels identify each year's ranking scope and absence threshold. Missing or incompatible evidence stays explicit. Strict fallback means the strict allocation target is shown, not borrowed estimate evidence. Reported minute values and density estimates are approximate. Championship matches are not proof of slot acceptance.</p>
     ${evidenceNote}
     <p class="note">The exploratory match-density boundary compares observed Kona-starter match rates by ranking position with a constant-rate model, then fits a two-rate breakpoint. It requires at least 3 matches before the breakpoint and positive BIC improvement after the penalty; it reports the best breakpoint and weighted 5%-95% rank/time support, with sensitivity to single-race matches. This is unverified matching density, not evidence of actual acceptance or declines. Race targets never place this boundary faster than strict allocation.</p>
     <div class="table-wrap"><table><thead><tr><th>Race year</th>${approaches.map(({label}) => `<th>${escapeHtml(label)}</th>`).join("")}</tr></thead><tbody>${years.map(year => `<tr><td>${yearCell(eventId, year)}</td>${approaches.map(({mode}) => `<td>${approachCell(standards[year][mode], mode)}</td>`).join("")}</tr>`).join("") || '<tr><td colspan="6" class="empty">No race years are visible.</td></tr>'}</tbody></table></div>
     ${approachSummaryTable(eventId, years, approaches, standards)}`;
-  lineChart("qualificationChart", years, approaches.map(({mode, label, color}) => ({
-    label, color,
-    values: years.map(year => {
-      const standard = standards[year][mode];
-      return standard?.available && !standard.cutoffSource?.startsWith("Strict fallback") && Number.isFinite(standard.needed) ? standard.needed : null;
-    }),
-  })));
 }
 
 // Cross-year summary of each approach's raw target; modified courses are excluded.
@@ -401,7 +394,7 @@ function renderFinderApproaches() {
   }));
   categoryPointChart("finderApproachChart", raceRows.map(({eventId}) => DATASETS[eventId].name), chartSeries,
     {includeZero: true, formatValue: signedDuration, formatTick: signedDurationShort, yAxisLabel: "Target minus expected time"});
-  section.querySelector(".note").textContent = `${division} · objective A, current rules on past results. Matched-slot cutoff uses the Nth same-cycle matched P1 pool rank (N = performance-pool slots), re-ranked under current rules; insufficient or incompatible evidence is unavailable and matches do not prove slot acceptance. Chance uses the existing day-to-day variation model; the rank factor is not calibrated or backtested. Strict fallbacks are labelled in the table and excluded from the chart; reported evidence is never replaced. Modified courses are excluded.`;
+  section.querySelector(".note").textContent = `${division} · objective A, current rules on past results. Matched-slot cutoff uses the Nth same-cycle matched pool rank (N = performance-pool slots), re-ranked under current rules; for R1-R4 race-years those starters qualified through age-group slots. Insufficient or incompatible evidence is unavailable and matches do not prove slot acceptance. Chance uses the existing day-to-day variation model; the rank factor is not calibrated or backtested. Strict fallbacks are labelled in the table and excluded from the chart; reported evidence is never replaced. Modified courses are excluded.`;
 }
 
 function decorateQualificationRankings() {
@@ -635,19 +628,51 @@ function evidenceRankAtOrBelow(ranking, threshold, scope) {
   return low ? {rank: low, reason: null} : {rank: null, reason: "no ranked finisher at or below threshold"};
 }
 
-function renderTargetEvidence() {
-  const section = document.getElementById("targetEvidencePlot");
-  if (!section) return;
-  const eventId = eventSelect.value;
-  const years = allRaceYears(eventId);
-  const note = document.getElementById("targetEvidenceNote");
-  const panels = document.getElementById("targetEvidenceChart");
-  document.getElementById("targetEvidenceTooltip").hidden = true;
-  if (!years.length) {
-    note.textContent = "Select at least one race year.";
-    panels.innerHTML = "";
-    return;
+const evidenceStyles = {strict: ["#006d77", ""], matched: ["#d1495b", "10 3"], density: ["#b08900", "2 3"], scan: ["#277da1", "9 3 2 3"], calibrated: ["#913d70", "12 4"], reported: ["#495057", "4 4"]};
+const evidenceColors = {matched: "#00796b", unmatched: "#8d9994", winner: "#d4a017", density: "#e9b949", scan: "#277da1"};
+const evidenceWinnerRecords = new Map();
+
+function evidenceWinnerDot(cx, cy) {
+  return `<circle class="evidence-winner" cx="${cx}" cy="${cy}" r="3" fill="${evidenceColors.winner}" pointer-events="none"/>`;
+}
+
+function evidenceSwatch(mode) {
+  const [color, dash] = evidenceStyles[mode];
+  return `<svg class="evidence-swatch" viewBox="0 0 24 8" aria-hidden="true"><line x1="0" y1="4" x2="24" y2="4" stroke="${color}" stroke-width="2.5" stroke-dasharray="${dash}"/></svg>`;
+}
+
+// Name of an age-group winner from the race results; null unless the fastest finisher matches the winner time.
+function ageGroupWinnerName(eventId, year, division, time) {
+  if (!evidenceWinnerRecords.has(eventId)) {
+    const fastest = new Map();
+    (DATASETS[eventId]?.records || []).forEach(row => {
+      const key = `${row.year}|${row.division}`;
+      if (!fastest.has(key) || row.overall < fastest.get(key).overall) fastest.set(key, row);
+    });
+    evidenceWinnerRecords.set(eventId, fastest);
   }
+  const row = evidenceWinnerRecords.get(eventId).get(`${year}|${division}`);
+  return row && Number.isFinite(time) && Math.abs(row.overall - time) <= 1 ? row.name : null;
+}
+
+function rankedFasterCount(ranking, ageGraded) {
+  let low = 0, high = ranking.length;
+  while (low < high) {
+    const middle = Math.floor((low + high) / 2);
+    if (ranking[middle][1] < ageGraded) low = middle + 1;
+    else high = middle;
+  }
+  return low;
+}
+
+// Age-group panels scale to their own slots and boundaries instead of a shared pool axis.
+function ageGroupAxisMaximum(ranks, fieldSize) {
+  const span = 1.25 * Math.max(10, ...ranks.filter(Number.isFinite));
+  const rounded = span <= 20 ? 5 * Math.ceil(span / 5) : span <= 100 ? 10 * Math.ceil(span / 10) : 50 * Math.ceil(span / 50);
+  return Math.max(1, Math.min(fieldSize, rounded));
+}
+
+function targetEvidenceEntries(eventId, years) {
   const entries = years.map(year => {
     const standards = Object.fromEntries(cutoffApproaches.map(({mode}) => [mode,
       approachStandard(eventId, year, dashboardContext.gender, dashboardContext.ageGroup, qualificationSystem, mode)]));
@@ -717,18 +742,36 @@ function renderTargetEvidence() {
     const plotRanking = plotCompatible ? plotPool.ranking_evidence : [];
     const winnerStarters = qualificationSystem === "current"
       ? evidenceTrace?.counterfactual_winners || [] : evidenceTrace?.starters || [];
-    const plotWinners = plotCompatible ? winnerStarters.flatMap(starter => {
-      if (starter.gender !== dashboardContext.gender) return [];
-      return (starter.matches || []).filter(match => match.event_id === eventId && match.year === year
-        && (plotScope !== "age group" || match.division === standard.division)
-        && (plotScope === "age group"
-          ? match.initial_slot === "Strict age-group slot" && match.pool_rank === 1
-          : match.age_group_winner === true || match.initial_slot === "Automatic winner"))
-        .map(match => ({name: starter.name, division: match.division, finishTime: match.finish_time}));
+    const matchedWinners = new Map();
+    if (plotCompatible) winnerStarters.forEach(starter => {
+      if (starter.gender !== dashboardContext.gender) return;
+      (starter.matches || []).forEach(match => {
+        if (match.event_id !== eventId || match.year !== year) return;
+        const winner = plotScope === "age group"
+          ? match.division === standard.division && match.initial_slot === "Strict age-group slot" && match.pool_rank === 1
+          : match.initial_slot === "Automatic winner";
+        if (winner) matchedWinners.set(match.division, {name: starter.name, finishTime: match.finish_time});
+      });
+    });
+    // P1 winners (matched or not) come from the objective's own allocation; they never hold a pool rank.
+    const winnerTimes = new Map(Object.entries((qualificationSystem === "historical"
+      ? data.historical_qualification?.pools : data.qualification?.pools)?.[year]?.winners || {})
+      .filter(([division]) => division.startsWith(dashboardContext.gender === "Male" ? "M" : "F")));
+    matchedWinners.forEach((winner, division) => { if (!winnerTimes.has(division)) winnerTimes.set(division, winner.finishTime); });
+    const plotWinners = plotCompatible && plotScope === "gender" ? [...winnerTimes].map(([division, finishTime]) => {
+      const winnerRatio = qualificationSystem === "historical"
+        ? historicalRows.find(row => row.division === division)?.ratio : data.qualification?.ratios?.[division];
+      const matched = matchedWinners.get(division);
+      return {division, finishTime, matched: Boolean(matched),
+        name: matched?.name || ageGroupWinnerName(eventId, year, division, finishTime),
+        ageGraded: Number.isFinite(finishTime) && winnerRatio > 0 ? finishTime * winnerRatio : null};
     }).sort((first, second) => first.division.localeCompare(second.division)) : [];
-    return {year, standard, standards, pool, matchEligible, compatible: hasMatches,
+    const leaderRow = plotCompatible && plotScope === "age group" ? plotRanking[0] : null;
+    const leader = leaderRow ? {matched: leaderRow[3] === true || leaderRow[2] > 0,
+      name: matchedWinners.get(standard.division)?.name || ageGroupWinnerName(eventId, year, standard.division, leaderRow[0])} : null;
+    return {year, standard, standards, pool, sourceCycle, matchEligible, compatible: hasMatches,
       ranking: hasMatches ? pool.ranking_evidence : rawRanking, expectedSlots,
-      plotPool, plotCompatible, plotRanking, plotWinners,
+      plotPool, plotCompatible, plotRanking, plotWinners, leader,
       plotOnlyLegacy: qualificationSystem === "historical" && source?.method === "legacy" && plotCompatible,
       plotUnavailableReason};
   });
@@ -736,124 +779,263 @@ function renderTargetEvidence() {
     const {standard, standards, pool, compatible, ranking, expectedSlots} = entry;
     const reason = DATASETS[eventId]?.group === "703" ? "No 70.3 World Championship starter list"
       : "No compatible ranked starter evidence for this race-year and cycle";
-    const info = (mode, rank, detail = "") => {
+    const info = (mode, rank, basis = "", noRank = "No rank available") => {
       const result = standards[mode];
       const fallback = result?.cutoffSource?.startsWith("Strict fallback");
-      if (!result) return {mode, rank: null, detail: "No compatible target"};
-      if (!result.available || fallback) return {mode, rank: null, detail: fallback ? result.cutoffSource : result.unavailableReason || result.cutoffSource || "Unavailable"};
-      if (!ranking.length) return {mode, rank: null, rankUnavailable: true, detail: `${reason}. Target: ${assumptionTime(result)}${detail ? `; ${detail}` : ""}`};
-      if (!Number.isFinite(rank) || rank < 1 || rank > ranking.length) return {mode, rank: null, rankUnavailable: true,
-        detail: `${Number.isFinite(rank) ? `rank ${rank}: no ranked finisher` : "No rank available"}${detail ? `; ${detail}` : ""}`};
-      const row = ranking[rank - 1];
-      const times = `finisher ${Number.isFinite(row[0]) ? duration(row[0]) : "unavailable"}${Number.isFinite(row[1]) ? `; age-graded ${qualificationDuration(row[1])}` : ""}`;
-      return {mode, rank, detail: `${times}${detail ? `; ${detail}` : ""}`};
+      const method = {mode, label: cutoffLabels[mode], rank: null, basis, target: null};
+      if (!result) return {...method, status: "No compatible target"};
+      if (!result.available || fallback) return {...method, status: fallback ? result.cutoffSource : result.unavailableReason || result.cutoffSource || "Unavailable"};
+      const target = assumptionTime(result);
+      if (!ranking.length) return {...method, target, status: reason};
+      if (!Number.isFinite(rank) || rank < 1 || rank > ranking.length) return {...method, target,
+        status: Number.isFinite(rank) ? `rank ${rank}: no ranked finisher` : noRank};
+      const [finish, graded] = ranking[rank - 1];
+      return {...method, rank, target, finish, graded};
     };
+    const ordinal = value => `${value}${[11, 12, 13].includes(value % 100) ? "th" : ["th", "st", "nd", "rd"][value % 10] || "th"}`;
     const density = pool?.cutoff_estimate || {};
     const scan = pool?.cutoff_scan || {};
     const factor = standards.calibrated;
-    const factorDetail = factor?.available ? `factor ${factor.rollDownFactor}; initial slots ${expectedSlots}; target ${assumptionTime(factor)}` : "";
+    const factorValue = factor?.rollDownFactor ?? qualificationAssumptions.rollDownFactor ?? 0;
+    const factorDetail = Number.isFinite(expectedSlots)
+      ? `scenario f = ${factorValue}; extra = floor(${expectedSlots} × f + 0.5) = ${Math.floor(expectedSlots * factorValue + 0.5)}` : "scenario";
     const matched = standards.matched;
-    const matchedDetail = matched?.available
-      ? `${matched.matchedPoolStarters} matched pool ranks; N=${expectedSlots}; mapped target ${assumptionTime(matched)}` : "";
+    const matchedDetail = !matched?.available ? "" : standard?.scope === "age group"
+      ? `${ordinal(expectedSlots)} of ${matched.matchedPoolStarters} matched age-group ranks, a matched age-group winner counts (N = ${expectedSlots} age-group slots)`
+      : `${ordinal(expectedSlots)} of ${matched.matchedPoolStarters} matched pool ranks (N = ${expectedSlots} pool slots)`;
+    const densityDetail = Number.isFinite(density.low_rank) && Number.isFinite(density.high_rank)
+      ? `exploratory; support ranks ${density.low_rank}-${density.high_rank}; ${density.matched_pool_starters ?? "unknown"} matched ranks${density.sensitive ? "; sensitive to single-race matches" : ""}`
+      : density.reason || "";
+    const scanDetail = scan.criterion_met
+      ? `stopping gap ${scan.gap_start_rank}-${scan.gap_end_rank}${Number.isFinite(scan.modeled_roll_down_percent) ? `; model-derived roll-down ${scan.modeled_roll_down_percent}%` : ""}`
+      : scan.reason || "";
     const reported = standards.reported;
     const reportRank = compatible && reported?.available && pool?.reported_cutoff_precision === "second"
       ? evidenceRankAtOrBelow(ranking, pool.reported_cutoff, standard.scope) : {rank: null, reason: "reported precision does not establish an exact rank"};
-    const reportDetail = `${pool?.reported_cutoff_source || "External report"}; reported cutoff ${duration(pool?.reported_cutoff)}; ${pool?.reported_cutoff_precision || "unknown"} precision${reportRank.reason ? `; ${reportRank.reason}` : ""}`;
+    const reportDetail = pool?.reported_cutoff_source
+      ? `${pool.reported_cutoff_source}; reported cutoff ${duration(pool.reported_cutoff)}; ${pool.reported_cutoff_precision || "unknown"} precision` : "";
     const methods = [
-      info("strict", expectedSlots, standard?.scope === "gender" ? "pool boundary; AG winner route is separate" : "allocated age-group boundary"),
+      info("strict", expectedSlots, standard?.scope === "gender" ? "initial pool boundary; AG winners use the separate automatic route" : "allocated age-group boundary"),
       info("matched", matched?.matchedCutoffRank, matchedDetail),
-      info("density", density.rank, Number.isFinite(density.low_rank) && Number.isFinite(density.high_rank) ? `exploratory support ranks ${density.low_rank}-${density.high_rank}` : "exploratory density support unavailable"),
-      info("scan", scan.criterion_met ? scan.rank : null, scan.criterion_met ? `${scan.consecutive_absences}-absence stopping gap ${scan.gap_start_rank}-${scan.gap_end_rank}` : `scan incomplete: ${scan.reason || "no full stopping gap"}`),
+      info("density", density.rank, densityDetail),
+      info("scan", scan.criterion_met ? scan.rank : null, scanDetail, scan.criterion_met ? "no post-allocation match" : "scan incomplete"),
       info("calibrated", factor?.factorRank, factorDetail),
-      info("reported", reportRank.rank, reportDetail),
+      info("reported", reportRank.rank, reportDetail, reportRank.reason),
     ];
-    return entry.matchEligible ? methods : methods.filter(method => ["strict", "calibrated"].includes(method.mode));
+    const reportedRow = methods.at(-1);
+    if (!reportedRow.rank && reportedRow.target && standard?.scope === "gender" && Number.isFinite(pool?.reported_cutoff)) {
+      reportedRow.gradedText = pool.reported_cutoff_precision === "second"
+        ? qualificationDuration(pool.reported_cutoff) : `~${duration(pool.reported_cutoff).slice(0, 5)}`;
+    }
+    return entry.matchEligible ? methods : methods.filter(method => (entry.sourceCycle
+      ? ["strict", "matched", "calibrated"] : ["strict", "calibrated"]).includes(method.mode));
   };
-  entries.forEach(entry => { entry.methods = methodsFor(entry); });
+  // B R1-R4 descriptive markers: never a qualification method, target or metric.
+  const legacyRowsFor = ({plotPool, plotRanking}) => {
+    const density = plotPool.cutoff_estimate || {};
+    const scan = plotPool.cutoff_scan || {};
+    const row = (mode, label, rank, basis, missing) => {
+      const ranked = Number.isFinite(rank) && rank >= 1 && rank <= plotRanking.length ? plotRanking[rank - 1] : null;
+      return {mode, label, plotOnly: true, rank: ranked ? rank : null, finish: ranked?.[0], graded: ranked?.[1],
+        target: "not a target", basis: ranked ? basis : "", status: ranked ? null : missing};
+    };
+    return [
+      row("density", "Legacy density boundary", density.rank,
+        `descriptive${Number.isFinite(density.low_rank) && Number.isFinite(density.high_rank) ? `; support ranks ${density.low_rank}-${density.high_rank}` : ""}; age-group rank 1 excluded`,
+        `unavailable: ${density.reason || "insufficient evidence"}`),
+      row("scan", "Five-unmatched scan", scan.criterion_met === true && scan.consecutive_absences === 5 ? scan.rank : null,
+        `descriptive; stopping gap ${scan.gap_start_rank}-${scan.gap_end_rank}; age-group rank 1 excluded`,
+        `unavailable: ${scan.reason || "incomplete scan"}`),
+    ];
+  };
+  entries.forEach(entry => {
+    entry.methods = methodsFor(entry);
+    entry.legacyRows = entry.plotOnlyLegacy ? legacyRowsFor(entry) : [];
+  });
+  return entries;
+}
+
+function renderTargetEvidence() {
+  const section = document.getElementById("targetEvidencePlot");
+  if (!section) return;
+  const eventId = eventSelect.value;
+  const years = allRaceYears(eventId);
+  const note = document.getElementById("targetEvidenceNote");
+  const panels = document.getElementById("targetEvidenceChart");
+  document.getElementById("targetEvidenceTooltip").hidden = true;
+  if (!years.length) {
+    note.textContent = "Select at least one race year.";
+    panels.innerHTML = "";
+    return;
+  }
+  const entries = targetEvidenceEntries(eventId, years);
   const expanded = document.getElementById("targetEvidenceExpand").checked;
-  const legacyPlotRanks = entries.flatMap(({plotOnlyLegacy, plotPool}) => plotOnlyLegacy ? [
-    plotPool?.cutoff_estimate?.rank, plotPool?.cutoff_estimate?.high_rank,
-    plotPool?.cutoff_scan?.rank, plotPool?.cutoff_scan?.gap_end_rank,
-  ] : []).filter(Number.isFinite);
-  const maximum = expanded ? Math.max(100, ...entries.flatMap(({pool, methods}) => [
+  const ageGroupPanel = entry => entry.plotCompatible && entry.plotPool?.slot_scope === "age group";
+  const poolMaximum = expanded ? Math.max(100, ...entries.filter(entry => !ageGroupPanel(entry)).flatMap(({pool, methods}) => [
     ...methods.map(method => method.rank || 0), methods.find(method => method.mode === "scan")?.rank ? pool?.cutoff_scan?.gap_end_rank || 0 : 0,
     methods.find(method => method.mode === "density")?.rank ? pool?.cutoff_estimate?.high_rank || 0 : 0,
-  ]), ...legacyPlotRanks) : Math.max(100, ...legacyPlotRanks);
-  const x = rank => 130 + (rank - 1) * 820 / Math.max(1, maximum - 1);
-  const styles = {strict: ["#006d77", ""], matched: ["#d1495b", "10 3"], density: ["#b08900", "2 3"], scan: ["#277da1", "9 3 2 3"], calibrated: ["#913d70", "12 4"], reported: ["#495057", "4 4"]};
-  const label = {strict: "Strict allocation", matched: "Matched-slot cutoff", density: "Exploratory density breakpoint", scan: "15-absence scan", calibrated: "Rank-based roll-down factor", reported: "Reported last accepted"};
-  const marker = method => method.rank && method.rank <= maximum
-    ? `<line x1="${x(method.rank)}" x2="${x(method.rank)}" y1="35" y2="195" stroke="${styles[method.mode][0]}" stroke-width="2" stroke-dasharray="${styles[method.mode][1]}"><title>${escapeHtml(label[method.mode])}: rank ${method.rank}; ${escapeHtml(method.detail)}</title></line>` : "";
-  panels.innerHTML = entries.map(({year, standard, pool, compatible, ranking, methods,
-    plotPool, plotCompatible, plotRanking, plotWinners, plotOnlyLegacy, plotUnavailableReason}) => {
-    const legend = `<ul class="evidence-legend" aria-label="${escapeHtml(year)} approach boundaries">${methods.map(method => `<li><span class="evidence-swatch" style="--marker-color:${styles[method.mode][0]}"></span><strong>${escapeHtml(label[method.mode])}</strong>: ${method.rank ? `rank ${method.rank}${method.rank > maximum ? " (outside displayed axis; expand)" : ""}; ` : method.rankUnavailable ? "Rank unavailable: " : "Unavailable: "}${escapeHtml(method.detail)}</li>`).join("")}</ul>`;
-    const plotScopeLabel = plotCompatible ? plotPool.slot_scope : standard?.scope;
-    const winnerRole = plotScopeLabel === "gender"
-      ? "separate automatic-slot route; no performance-pool rank"
-      : "age-group rank 1; not a P1 automatic-slot winner";
-    const winnerDescription = winner => `${winner.division}; ${winner.name}; finishing time ${Number.isFinite(winner.finishTime) ? duration(winner.finishTime) : "unavailable"}; ${winnerRole}`;
-    const winnerList = `<p class="note"><strong>Matched AG winners (gold)</strong>: ${winnerRole}.</p>${plotWinners.length
-      ? `<ul class="evidence-winner-list" aria-label="Matched age-group first-place finishers">${plotWinners.map(winner => `<li aria-label="${escapeHtml(winnerDescription(winner))}"><span class="evidence-winner-swatch" aria-hidden="true"></span><strong>${escapeHtml(winner.division)}</strong> · ${escapeHtml(winner.name)} · ${Number.isFinite(winner.finishTime) ? duration(winner.finishTime) : "finish time unavailable"}<small class="evidence-winner-role">${escapeHtml(winnerRole)}</small></li>`).join("")}</ul>`
-      : `<p class="note">${plotCompatible ? "No matched age-group first-place finisher in the available evidence." : "Unavailable: compatible World Championship winner-match evidence is missing."}</p>`}`;
+  ])) : 100;
+  const panelMaximum = entry => {
+    if (!ageGroupPanel(entry)) return poolMaximum;
+    if (expanded) return entry.plotRanking.length;
+    const scan = entry.plotPool.cutoff_scan || {};
+    // The density support band may run past the axis; it is clipped rather than stretching the scale.
+    return ageGroupAxisMaximum([entry.expectedSlots, ...entry.methods.map(method => method.rank), ...entry.legacyRows.map(row => row.rank),
+      ...(entry.plotOnlyLegacy && scan.criterion_met === true && scan.consecutive_absences === 5 ? [scan.gap_end_rank] : [])], entry.plotRanking.length);
+  };
+  const plot = {left: 130, right: 940, top: 12, matched: 38, unmatched: 84, bottom: 110};
+  const axis = maximum => {
+    const step = (plot.right - plot.left) / maximum;
+    const x = rank => Math.round((plot.left + (rank - 0.5) * step) * 10) / 10;
+    const tickStep = [1, 2, 5, 10, 20, 25, 50, 100, 200, 250, 500].find(value => maximum / value <= 10) || 1000;
+    const ticks = [...new Set([1, ...Array.from({length: Math.floor(maximum / tickStep)}, (_, index) => (index + 1) * tickStep)])];
+    if (maximum - ticks.at(-1) >= tickStep * 0.4) ticks.push(maximum);
+    const band = (low, high, color, opacity, title) => low <= maximum
+      ? `<rect x="${x(low) - step / 2}" y="${plot.top}" width="${(Math.min(high, maximum) - low + 1) * step}" height="${plot.bottom - plot.top}" fill="${color}" opacity="${opacity}"><title>${escapeHtml(title)}</title></rect>` : "";
+    const boundary = (rank, mode, title) => rank <= maximum
+      ? `<line x1="${x(rank)}" x2="${x(rank)}" y1="${plot.top}" y2="${plot.bottom}" stroke="${evidenceStyles[mode][0]}" stroke-width="2" stroke-dasharray="${evidenceStyles[mode][1]}"><title>${escapeHtml(title)}</title></line>` : "";
+    return {maximum, step, x, ticks, band, boundary};
+  };
+  const methodTitle = method => `${method.label}: rank ${method.rank}; finisher ${Number.isFinite(method.finish) ? duration(method.finish) : "unavailable"}${Number.isFinite(method.graded) ? `; age-graded ${qualificationDuration(method.graded)}` : ""}${method.basis ? `; ${method.basis}` : ""}`;
+  const hit = (cx, cy, width, height, detail, focusable) => `<rect class="evidence-point" x="${Math.round((cx - width / 2) * 10) / 10}" y="${cy - height / 2}" width="${Math.round(width * 10) / 10}" height="${height}" fill="transparent" tabindex="${focusable ? 0 : -1}" role="button" aria-label="${escapeHtml(detail)}" aria-keyshortcuts="ArrowLeft ArrowRight" aria-describedby="targetEvidenceTooltip" data-x="${cx}" data-evidence-detail="${escapeHtml(detail)}"/>`;
+  const methodTable = ({methods, legacyRows, expectedSlots, standard, matchEligible, sourceCycle}) => {
+    const graded = standard?.scope !== "age group";
+    const beyond = rank => !Number.isFinite(rank) || !Number.isFinite(expectedSlots) ? "—"
+      : rank > expectedSlots ? `+${rank - expectedSlots}` : String(rank - expectedSlots);
+    const rows = [...methods, ...legacyRows].map(method => `<tr${method.plotOnly ? ' class="plot-only"' : ""}>`
+      + `<td>${evidenceSwatch(method.mode)}${escapeHtml(method.label)}${method.plotOnly ? " <small>(plot only)</small>" : ""}</td>`
+      + `<td class="num">${method.rank ?? "—"}</td><td class="num">${beyond(method.rank)}</td>`
+      + `<td>${Number.isFinite(method.finish) ? duration(method.finish) : "—"}</td>`
+      + (graded ? `<td>${Number.isFinite(method.graded) ? qualificationDuration(method.graded) : escapeHtml(method.gradedText || "—")}</td>` : "")
+      + `<td>${escapeHtml(method.target || "—")}</td>`
+      + `<td class="basis">${escapeHtml([method.status, method.basis].filter(Boolean).join("; "))}</td></tr>`).join("");
+    const missing = matchEligible ? "" : qualificationSystem === "current" && sourceCycle
+      ? `<p class="note">Match-density boundary, 15-absence scan and reported last accepted are not applicable: the original race used age-group allocation (R1-R4), and these pool methods need an original P1 race. The matched-slot cutoff re-ranks this cycle's matched starters under current rules, although they qualified through age-group slots.</p>`
+      : sourceCycle
+      ? `<p class="note">Match-density boundary, 15-absence scan and reported last accepted are not applicable: the original race used age-group allocation (R1-R4), and these pool methods need an original P1 race. The matched-slot cutoff takes the Nth matched rank in the actual age-group ranking (N = age-group slots); a matched age-group winner counts.</p>`
+      : `<p class="note">Matched-slot cutoff, match-density boundary, 15-absence scan and reported last accepted are not applicable: the original qualifying cycle is unknown, and these methods need a known qualifying cycle.</p>`;
+    return `<table class="evidence-methods"><thead><tr><th>Method</th><th class="num">Rank</th><th class="num" title="Ranks past the initial allocation: a model or scenario depth, not a count of declines">Beyond allocation</th><th>Finish time</th>${graded ? "<th>Age-graded</th>" : ""}<th>Target ${escapeHtml(standard?.division || "")}</th><th>Basis</th></tr></thead><tbody>${rows}</tbody></table>${missing}`;
+  };
+  panels.innerHTML = entries.map(entry => {
+    const {year, methods, expectedSlots, plotPool, plotCompatible, plotRanking, plotWinners, leader, plotOnlyLegacy, plotUnavailableReason} = entry;
+    const table = methodTable(entry);
     if (!plotCompatible || !plotRanking.length) {
       const reason = plotCompatible ? "No ranked qualifying finishers are available for this World Championship match list." : plotUnavailableReason;
-      return `<div class="evidence-year" data-evidence-year="${escapeHtml(year)}"><h3>${escapeHtml(year)}</h3><p class="note">${escapeHtml(reason)}</p>${winnerList}${legend}</div>`;
+      return `<div class="evidence-year" data-evidence-year="${escapeHtml(year)}"><div class="evidence-year-head"><h3>${escapeHtml(year)}</h3><span>Ranked evidence unavailable</span></div><p class="note">${escapeHtml(reason)}</p>${table}</div>`;
     }
-    const scan = plotPool?.cutoff_scan || {};
-    const density = plotPool?.cutoff_estimate || {};
-    const scope = plotPool.slot_scope === "age group" ? `Age group ${dashboardContext.ageGroup} rank` : `${dashboardContext.gender} performance pool rank`;
-    const winnerLane = plotPool.slot_scope === "gender" && plotWinners.length
-      ? `<text x="115" y="24" text-anchor="end">Matched AG winners</text><line x1="130" y1="20" x2="950" y2="20" stroke="#d4a017" opacity=".35"/>${plotWinners.map((winner, index) => {
-        const laneX = 130 + (index + 1) * 820 / (plotWinners.length + 1);
-        const description = winnerDescription(winner);
-        return `<g class="evidence-winner-marker" role="img" tabindex="0" focusable="true" aria-label="${escapeHtml(description)}"><title>${escapeHtml(description)}</title><circle cx="${laneX}" cy="20" r="5" fill="#d4a017" stroke="#fff" stroke-width="1.5"/></g>`;
-      }).join("")}` : "";
-    let markup = `${winnerLane}<text x="115" y="78" text-anchor="end">Matched</text><text x="115" y="158" text-anchor="end">Not matched</text>`;
-    if (methods.find(method => method.mode === "density")?.rank && Number.isFinite(density.low_rank) && Number.isFinite(density.high_rank) && density.low_rank <= maximum) {
-      markup += `<rect x="${x(density.low_rank)}" y="35" width="${Math.max(1, x(Math.min(density.high_rank, maximum)) - x(density.low_rank))}" height="160" fill="#e9b949" opacity=".18"><title>Density support: ranks ${density.low_rank} to ${density.high_rank}</title></rect>`;
+    const ageGroupScope = plotPool.slot_scope === "age group";
+    const {maximum, step, x, ticks, band, boundary} = axis(panelMaximum(entry));
+    const scope = ageGroupScope ? `Age group ${dashboardContext.ageGroup} rank` : `${dashboardContext.gender} performance pool rank`;
+    const scan = plotPool.cutoff_scan || {};
+    const density = plotPool.cutoff_estimate || {};
+    const selected = mode => methods.some(method => method.mode === mode && method.rank);
+    let markup = ticks.map(rank => `<line class="grid" x1="${x(rank)}" x2="${x(rank)}" y1="${plot.top}" y2="${plot.bottom}"/>`).join("")
+      + `<text x="${plot.left - 12}" y="${plot.matched + 4}" text-anchor="end">Matched</text><text x="${plot.left - 12}" y="${plot.unmatched + 4}" text-anchor="end">Not matched</text>`;
+    if (selected("density") && Number.isFinite(density.low_rank) && Number.isFinite(density.high_rank)) {
+      markup += band(density.low_rank, density.high_rank, evidenceColors.density, 0.22, `Density support: ranks ${density.low_rank} to ${density.high_rank}`);
     }
-    if (methods.find(method => method.mode === "scan")?.rank && scan.criterion_met && Number.isFinite(scan.gap_start_rank) && Number.isFinite(scan.gap_end_rank) && scan.gap_start_rank <= maximum) {
-      markup += `<rect x="${x(scan.gap_start_rank)}" y="35" width="${Math.max(3, x(Math.min(scan.gap_end_rank, maximum)) - x(scan.gap_start_rank))}" height="160" fill="#277da1" opacity=".15"><title>Stopping gap: ranks ${scan.gap_start_rank} to ${scan.gap_end_rank}</title></rect>`;
+    if (selected("scan") && scan.criterion_met && Number.isFinite(scan.gap_start_rank) && Number.isFinite(scan.gap_end_rank)) {
+      markup += band(scan.gap_start_rank, scan.gap_end_rank, evidenceColors.scan, 0.15, `Stopping gap: ranks ${scan.gap_start_rank} to ${scan.gap_end_rank}`);
     }
-    if (plotOnlyLegacy && Number.isFinite(density.rank) && density.rank <= maximum) {
-      if (Number.isFinite(density.low_rank) && Number.isFinite(density.high_rank) && density.low_rank <= maximum) {
-        markup += `<rect x="${x(density.low_rank)}" y="35" width="${Math.max(1, x(Math.min(density.high_rank, maximum)) - x(density.low_rank))}" height="160" fill="#e9b949" opacity=".18"><title>Historical age-group density support, plot only: ranks ${density.low_rank} to ${density.high_rank}</title></rect>`;
+    if (plotOnlyLegacy && Number.isFinite(density.rank)) {
+      if (Number.isFinite(density.low_rank) && Number.isFinite(density.high_rank)) {
+        markup += band(density.low_rank, density.high_rank, evidenceColors.density, 0.22, `Historical age-group density support, plot only: ranks ${density.low_rank} to ${density.high_rank}`);
       }
-      markup += `<line x1="${x(density.rank)}" x2="${x(density.rank)}" y1="35" y2="195" stroke="${styles.density[0]}" stroke-width="2" stroke-dasharray="2 3"><title>Historical age-group density boundary, plot only: rank ${density.rank}; ${escapeHtml(density.reason || "exploratory")}</title></line>`;
+      markup += boundary(density.rank, "density", `Historical age-group density boundary, plot only: rank ${density.rank}; ${density.reason || "exploratory"}`);
     }
     if (plotOnlyLegacy && scan.criterion_met === true && scan.consecutive_absences === 5
-      && Number.isFinite(scan.gap_start_rank) && Number.isFinite(scan.gap_end_rank) && scan.gap_start_rank <= maximum) {
-      markup += `<rect x="${x(scan.gap_start_rank)}" y="35" width="${Math.max(3, x(Math.min(scan.gap_end_rank, maximum)) - x(scan.gap_start_rank))}" height="160" fill="#277da1" opacity=".15"><title>Historical five-unmatched age-group scan, plot only: ranks ${scan.gap_start_rank} to ${scan.gap_end_rank}</title></rect>`;
-      if (Number.isFinite(scan.rank) && scan.rank <= maximum) {
-        markup += `<line x1="${x(scan.rank)}" x2="${x(scan.rank)}" y1="35" y2="195" stroke="${styles.scan[0]}" stroke-width="2" stroke-dasharray="9 3 2 3"><title>Last matched age-group finisher before five consecutive unmatched ranks: rank ${scan.rank}</title></line>`;
-      }
+      && Number.isFinite(scan.gap_start_rank) && Number.isFinite(scan.gap_end_rank)) {
+      markup += band(scan.gap_start_rank, scan.gap_end_rank, evidenceColors.scan, 0.15, `Historical five-unmatched age-group scan, plot only: ranks ${scan.gap_start_rank} to ${scan.gap_end_rank}`);
+      if (Number.isFinite(scan.rank)) markup += boundary(scan.rank, "scan", `Last matched age-group finisher before five consecutive unmatched ranks: rank ${scan.rank}`);
     }
-    markup += methods.map(marker).join("");
-    const width = 820 / Math.max(1, maximum - 1);
+    markup += methods.filter(method => method.rank).map(method => boundary(method.rank, method.mode, methodTitle(method))).join("");
+    let glyphs = "", hits = "", winnerHits = "";
     plotRanking.slice(0, maximum).forEach((row, index) => {
       const [raw, graded, matches] = row;
       const rank = index + 1;
-      const ageGroupWinner = plotPool.slot_scope === "age group" && rank === 1 && (row[3] === true || matches > 0);
-      const matched = matches > 0 || ageGroupWinner;
-      const matchStatus = ageGroupWinner ? "matched age-group rank 1; excluded from legacy plot density/scan inputs and counts"
+      const isLeader = ageGroupScope && rank === 1;
+      const matched = isLeader ? leader.matched : matches > 0;
+      const status = isLeader
+        ? `${matched ? "matched" : "not matched"} age-group rank 1${leader.name ? ` (${leader.name})` : ""}; age-group winner, not a P1 automatic-slot winner; excluded from legacy plot density/scan inputs and counts`
         : matched ? `matched${matches > 1 ? `, ${matches} candidate races` : ""}` : "not matched";
-      const detail = `Race year ${year}; ${scope}: ${rank}; Finishing time: ${Number.isFinite(raw) ? duration(raw) : "unavailable"}${Number.isFinite(graded) ? `; age-graded time: ${qualificationDuration(graded)}` : ""}; Match status: ${plotCompatible ? matchStatus : "unavailable"}`;
-      const center = matched ? 74 : 154;
-      markup += `<circle cx="${x(rank)}" cy="${center}" r="3" fill="${ageGroupWinner ? "#d4a017" : matches ? "#00796b" : "#8d9994"}" pointer-events="none"/>`;
-      markup += `<rect class="evidence-point" x="${x(rank) - width / 2}" y="${center - 24}" width="${width}" height="48" fill="transparent" tabindex="${index ? -1 : 0}" role="button" aria-label="${escapeHtml(detail)}" aria-keyshortcuts="ArrowLeft ArrowRight" aria-describedby="targetEvidenceTooltip" data-evidence-detail="${escapeHtml(detail)}"/>`;
+      const detail = `Race year ${year}; ${scope}: ${rank}; Finishing time: ${Number.isFinite(raw) ? duration(raw) : "unavailable"}${Number.isFinite(graded) ? `; age-graded time: ${qualificationDuration(graded)}` : ""}; Match status: ${status}`;
+      const cy = matched ? plot.matched : plot.unmatched;
+      glyphs += isLeader ? evidenceWinnerDot(x(rank), cy)
+        : `<circle cx="${x(rank)}" cy="${cy}" r="3" fill="${matched ? evidenceColors.matched : evidenceColors.unmatched}" pointer-events="none"/>`;
+      hits += hit(x(rank), cy, step, 36, detail, index === 0);
     });
-    markup += `<line class="axis" x1="130" y1="195" x2="950" y2="195"/><text x="130" y="215">1</text><text x="950" y="215" text-anchor="end">${maximum}</text><text x="540" y="240" text-anchor="middle">${scope}</text>`;
-    const scanNote = !methods.some(method => method.mode === "scan") ? ""
-      : scan.criterion_met ? ` Scan gap ${scan.gap_start_rank}-${scan.gap_end_rank} (${scan.consecutive_absences} consecutive unmatched).`
-      : ` Scan incomplete: ${scan.reason || "no full stopping gap"}.`;
-    const plotOnlyNote = plotOnlyLegacy ? `<p class="note">B legacy plot only: ${Number.isFinite(density.rank)
-      ? `density boundary at age-group rank ${density.rank}${Number.isFinite(density.low_rank) && Number.isFinite(density.high_rank) ? ` (support ${density.low_rank}-${density.high_rank})` : ""}`
-      : `density boundary unavailable (${escapeHtml(density.reason || "insufficient evidence")})`}; ${scan.criterion_met === true && scan.consecutive_absences === 5
-        ? `five-unmatched scan gap ${scan.gap_start_rank}-${scan.gap_end_rank}`
-        : `five-unmatched scan unavailable (${escapeHtml(scan.reason || "incomplete scan")})`}. These descriptive markers are not qualification methods or results and do not affect targets, rank factors, Finder chances, calibration, or model metrics. A matched age-group rank-1 finisher is shown gold and excluded from plot density/scan inputs and counts.</p>` : "";
-    return `<div class="evidence-year" data-evidence-year="${escapeHtml(year)}"><h3>${escapeHtml(year)} · ${scope}</h3><p class="note">WC ${escapeHtml(plotPool.kona_cycle)}; ranking cycle ${escapeHtml(plotPool.ranking_cycle)}.${escapeHtml(scanNote)}${standard.scope === "gender" ? " Matched age-group winners are listed separately in gold, without performance-pool ranks." : ""}</p>${winnerList}${plotOnlyNote}<svg class="chart evidence-chart" viewBox="0 0 1000 260" role="group" aria-label="${escapeHtml(year)} ${escapeHtml(scope)}. Use left and right arrow keys to inspect ranks.">${markup}</svg>${legend}</div>`;
+    // P1 winners sit where their age-graded time falls but never take a pool rank.
+    const overflow = {matched: 0, unmatched: 0};
+    plotWinners.forEach(winner => {
+      const faster = Number.isFinite(winner.ageGraded) ? rankedFasterCount(plotRanking, winner.ageGraded) : null;
+      const inside = faster !== null && faster < maximum;
+      const lane = winner.matched ? "matched" : "unmatched";
+      const cx = inside ? Math.round((plot.left + faster * step) * 10) / 10 : plot.right + 20 + 7 * Math.min(4, overflow[lane]++);
+      const position = faster === null ? "no age-graded standard, so no position"
+        : faster === 0 ? "faster than every ranked pool finisher by age-graded time"
+        : faster >= plotRanking.length ? "slower than every ranked pool finisher by age-graded time"
+        : `between pool ranks ${faster} and ${faster + 1} by age-graded time`;
+      const detail = `Race year ${year}; AG winner ${winner.division}; ${winner.name || "name unavailable"}; finishing time ${Number.isFinite(winner.finishTime) ? duration(winner.finishTime) : "unavailable"}; separate automatic-slot route; no performance-pool rank; ${winner.matched ? "matched" : "not matched"} on the World Championship start list${Number.isFinite(winner.ageGraded) ? `; age-graded ${qualificationDuration(winner.ageGraded)}` : ""}; ${position}${inside ? "" : `; drawn right of displayed rank ${maximum}`}`;
+      glyphs += evidenceWinnerDot(cx, plot[lane]);
+      winnerHits += hit(cx, plot[lane], 10, 16, detail, false);
+    });
+    if (overflow.matched || overflow.unmatched) {
+      markup += `<line class="grid" x1="${plot.right + 8}" x2="${plot.right + 8}" y1="${plot.top}" y2="${plot.bottom}" stroke-dasharray="3 3"/><text x="${plot.right + 34}" y="${plot.bottom + 17}" text-anchor="middle">&gt;${maximum}</text>`;
+    }
+    markup += `<line class="axis" x1="${plot.left}" y1="${plot.bottom}" x2="${plot.right}" y2="${plot.bottom}"/>`
+      + ticks.map(rank => `<line class="axis" x1="${x(rank)}" x2="${x(rank)}" y1="${plot.bottom}" y2="${plot.bottom + 4}"/><text x="${x(rank)}" y="${plot.bottom + 17}" text-anchor="middle">${rank}</text>`).join("")
+      + `<text x="${(plot.left + plot.right) / 2}" y="${plot.bottom + 36}" text-anchor="middle">${escapeHtml(scope)}</text>`
+      + glyphs + hits + winnerHits;
+    const winnerSummary = ageGroupScope
+      ? `age-group rank 1 ${leader?.matched ? "matched" : "not matched"}`
+      : `${plotWinners.length} AG winners, ${plotWinners.filter(winner => winner.matched).length} matched`;
+    const facts = [scope, `WC ${plotPool.kona_cycle} start list`, `ranked under ${plotPool.ranking_cycle} rules`,
+      `${expectedSlots} initial ${ageGroupScope ? "age-group" : "pool"} slots`,
+      `${plotRanking.filter(row => row[2] > 0).length} matched ranks${ageGroupScope ? " besides rank 1" : ""}`, winnerSummary,
+      `showing ranks 1-${maximum} of ${plotRanking.length}`];
+    return `<div class="evidence-year" data-evidence-year="${escapeHtml(year)}"><div class="evidence-year-head"><h3>${escapeHtml(year)}</h3><span>${facts.map(escapeHtml).join(" · ")}</span></div>`
+      + `<svg class="chart evidence-chart" viewBox="0 0 1000 ${plot.bottom + 44}" role="group" aria-label="${escapeHtml(year)} ${escapeHtml(scope)}. Use left and right arrow keys to inspect ranks and age-group winners.">${markup}</svg>${table}</div>`;
   }).join("");
-  note.textContent = `${qualificationSystem === "current" ? "A: current rules" : "B: historical rules"}. All panels show ranks 1-${maximum}${expanded ? " through the available boundaries" : " (expand to see later boundaries and gaps)"}. Rank axes identify the selected age group or gender performance pool. Matched P1 winners appear in a separate gold lane with no pool rank; they are excluded from pool density and scan metrics. B legacy density and five-unmatched scan markers are plot-only, not selected methods or qualification results, and do not affect targets, Finder chances, or model metrics. A match does not prove acceptance; not matched does not prove absence or decline.`;
+  const hasAgeGroupPanels = entries.some(ageGroupPanel);
+  const axisNote = [hasAgeGroupPanels && entries.every(entry => ageGroupPanel(entry) || !entry.plotCompatible) ? ""
+    : `Pool panels show ranks 1-${poolMaximum}${expanded ? " through the available boundaries" : " (expand to see later boundaries and gaps)"}.`,
+  hasAgeGroupPanels ? `Age-group panels are scaled to their own slots and boundaries${expanded ? " and show the whole age-group field" : " (expand to see the whole age-group field)"}.` : ""].filter(Boolean).join(" ");
+  note.textContent = `${qualificationSystem === "current" ? "A: current rules on historical results" : "B: historically correct rules"}. ${axisNote} Dots are the race-year's ranked finishers: teal if found on the same-cycle World Championship start list, grey if not. Gold dots are age-group winners, matched or not. In a performance-pool ranking they take the separate automatic-slot route: they are placed by age-graded time but hold no pool rank and are excluded from pool ranks, matched-slot counts, density and scan. ${qualificationSystem === "current"
+    ? "Races that originally used age-group allocation (R1-R4) show strict, matched-slot and rank-factor boundaries; their matched starters qualified through age-group slots and are re-ranked under current rules."
+    : "In a historical age-group ranking the winner is age-group rank 1. The matched-slot cutoff takes the Nth matched age-group rank (N = age-group slots) and counts a matched winner; the legacy density and five-unmatched scan markers are plot-only, exclude that winner and never affect targets, Finder chances or model metrics."} Beyond allocation counts ranks past the initial slots: a model or scenario depth, not a count of declines. A match does not prove acceptance; no match does not prove absence or decline.`;
+}
+
+// Same per-year method rows as the evidence tables, so both views report identical ranks and targets.
+function renderTargetMethodCharts() {
+  const title = document.getElementById("qualificationChartTitle");
+  const note = document.getElementById("qualificationChartNote");
+  if (!title || !note || !document.getElementById("qualificationRollDownChart")) return;
+  const eventId = eventSelect.value;
+  if (!isQualifyingEvent(eventId)) return;
+  const historical = qualificationSystem === "historical";
+  const division = divisionFor(dashboardContext.gender, dashboardContext.ageGroup);
+  const years = allRaceYears(eventId);
+  const entries = targetEvidenceEntries(eventId, years);
+  title.textContent = `${historical ? "Historical" : "Current-rules"} time needed and roll-down · ${division}`;
+  const series = value => cutoffApproaches.map(({mode, label, color}) => ({mode, label, color,
+    values: entries.map(entry => entry.methods.some(method => method.mode === mode) ? value(entry, mode) : null)}));
+  lineChart("qualificationChart", years, series((entry, mode) => {
+    const standard = entry.standards[mode];
+    return standard?.available && !standard.cutoffSource?.startsWith("Strict fallback") && Number.isFinite(standard.needed) ? standard.needed : null;
+  }));
+  const signedRanks = value => {
+    const rounded = Math.abs(value) >= 5 ? Math.round(value) : Math.round(value * 10) / 10;
+    return `${rounded > 0 ? "+" : ""}${rounded}`;
+  };
+  const rollDownSeries = series((entry, mode) => {
+    const rank = entry.methods.find(method => method.mode === mode)?.rank;
+    return Number.isFinite(rank) && Number.isFinite(entry.expectedSlots) ? rank - entry.expectedSlots : null;
+  });
+  lineChart("qualificationRollDownChart", years, rollDownSeries, signedRanks,
+    {zeroBaseline: rollDownSeries.every(item => item.values.every(value => value === null || value >= 0))});
+  note.textContent = `${historical ? "B: historically correct rules" : "A: current rules on historical results"}. Top: raw ${division} finish time needed per race-year for every applicable method (pool years: slower of the age-group winner and the pool equivalent). Bottom: each method's boundary rank minus the initial slots, from the same ranking as the evidence tables above. Strict allocation is the no-roll-down baseline (0); the rank factor is a scenario; matched-slot, density and scan are model estimates from matched World Championship starters; reported last accepted counts only with an exact rank. ${historical
+    ? "R1-R4 years use age-group ranks and offer strict, matched-slot (Nth matched age-group rank, a matched winner counts) and rank factor; P1 years use gender-pool ranks."
+    : "All years use the current gender pool; matched-slot cutoffs of R1-R4 race-years re-rank starters who qualified through age-group slots."} Strict fallbacks and plot-only legacy markers are excluded. Roll-down depth is not a count of declines or proof of acceptance.`;
 }
 
 function attachEvidenceTooltips(section) {
@@ -905,7 +1087,8 @@ function attachEvidenceTooltips(section) {
       return;
     }
     if (!point || !["ArrowLeft", "ArrowRight"].includes(event.key)) return;
-    const points = [...point.closest("svg").querySelectorAll(".evidence-point")];
+    const points = [...point.closest("svg").querySelectorAll(".evidence-point")]
+      .sort((first, second) => Number(first.dataset.x) - Number(second.dataset.x));
     const index = points.indexOf(point);
     const next = points[Math.max(0, Math.min(points.length - 1, index + (event.key === "ArrowRight" ? 1 : -1)))];
     point.setAttribute("tabindex", "-1");
@@ -932,6 +1115,7 @@ function decorateDashboard() {
   renderTargetOverview();
   renderTargetEvidence();
   renderSelectedQualification();
+  renderTargetMethodCharts();
   renderOddsApproaches();
   renderFinderApproaches();
   decorateQualificationRankings();
@@ -954,10 +1138,10 @@ function initializeDashboardUI() {
     .context-fields[hidden], .context-years[hidden], .chart-panel[hidden] {display:none}
     .context-fields label {min-width:110px} .context-bar .note {margin:10px 0 0}
     .context-fields input[type=number] {width:100%; min-width:0; box-sizing:border-box}
-    .qualification-approach {border:0; padding:0; margin:0; min-width:min(100%,520px)}
-    .qualification-approach legend {font-size:12px; color:var(--muted); margin-bottom:5px}
-    .segmented-control {display:flex; border:1px solid var(--line); border-radius:4px; overflow:hidden; min-height:38px}
-    .segmented-control label {display:flex; align-items:center; gap:7px; padding:7px 10px; background:#f4f7f5; cursor:pointer; flex:1}
+    .qualification-approach {flex:0 0 auto; border:0; padding:0; margin:0; min-width:min(100%,520px)}
+    .qualification-approach legend {float:left; width:100%; padding:0; margin:0 0 6px; color:var(--muted); font-size:11px; font-weight:700; text-transform:uppercase; line-height:20px}
+    .segmented-control {clear:both; display:flex; border:1px solid var(--line-strong); border-radius:3px; overflow:hidden; min-height:39px}
+    .segmented-control label {display:flex; align-items:center; gap:7px; padding:0 12px; background:#f4f7f5; cursor:pointer; flex:1 0 auto; white-space:nowrap}
     .segmented-control label + label {border-left:1px solid var(--line)}
     .segmented-control label:has(input:checked) {background:#dcebe8; color:var(--ink); font-weight:700}
     .segmented-control input {margin:0; accent-color:var(--accent)}
@@ -977,15 +1161,21 @@ function initializeDashboardUI() {
     details.step-section[open] > summary {margin-bottom:12px}
     #targetOverview .metrics, #qtimeSummary .metrics {grid-template-columns:repeat(auto-fit, minmax(180px, 1fr))}
     .controls {border:0; border-bottom:1px solid var(--line); border-radius:0; background:transparent; padding:12px 0}
-    .assumption-fields {margin-top:12px; border-top:1px solid var(--line); padding-top:12px}
-    .assumption-fields .binary-label {display:flex; align-items:center; gap:6px; min-height:32px}
+    .assumption-fields {align-items:flex-start; gap:12px 24px; margin-top:12px; border-top:1px solid var(--line); padding-top:12px}
+    .assumption-fields > label {line-height:20px}
+    .assumption-fields .binary-label {display:flex; align-items:center; gap:7px; height:39px; color:var(--ink); font-size:13px; font-weight:600; text-transform:none}
+    .field-head {display:flex; align-items:center; gap:6px; height:20px; margin-bottom:6px; color:var(--muted); font-size:11px; font-weight:700; text-transform:uppercase}
+    .field-head label {display:inline; line-height:20px}
     .context-tip {position:relative; min-width:110px}
-    .context-tip > label {padding-right:36px}
-    .factor-input-row {display:flex; align-items:center; gap:6px; padding-right:38px}
+    .factor-input-row {display:flex; align-items:center; gap:6px}
     .factor-input-row input {max-width:110px}
-    .factor-status {display:block; max-width:280px; margin-top:4px; color:var(--muted); font-size:12px; line-height:1.35}
-    .context-help {position:absolute; top:0; right:0; width:32px; height:32px; padding:0; color:var(--ink); background:#e5ece8; border:1px solid var(--line); border-radius:50%; font-weight:700}
-    .context-tip [role=tooltip] {display:none; position:absolute; z-index:20; top:100%; right:0; box-sizing:border-box; width:240px; max-width:calc(100vw - 48px); padding:9px; color:#fff; background:#15231e; border-radius:3px; font-size:12px; font-weight:400; text-transform:none; line-height:1.4; overflow-wrap:anywhere}
+    .factor-status {display:block; max-width:300px; margin-top:4px; color:var(--muted); font-size:12px; line-height:1.35}
+    #finderObjective {align-self:center; font-size:12px; font-weight:700}
+    #cutoffHelp {flex:1 1 100%; color:var(--muted); font-size:12px}
+    #cutoffHelp summary {cursor:pointer; color:var(--ink); font-weight:700}
+    #cutoffHelp p {max-width:960px; margin:6px 0 0}
+    .context-help {flex:0 0 auto; width:20px; height:20px; min-height:0; padding:0; color:var(--ink); background:#e5ece8; border:1px solid var(--line); border-radius:50%; font-size:11px; font-weight:700; line-height:1}
+    .context-tip [role=tooltip] {display:none; position:absolute; z-index:20; top:calc(100% + 4px); left:0; box-sizing:border-box; width:260px; max-width:calc(100vw - 48px); padding:9px; color:#fff; background:#15231e; border-radius:3px; font-size:12px; font-weight:400; text-transform:none; line-height:1.4; overflow-wrap:anywhere}
     .context-tip:focus-within:has(input:focus-visible) [role=tooltip], .context-help:focus-visible + [role=tooltip], .context-help[aria-expanded=true] + [role=tooltip] {display:block}
     @media (hover:hover) {.context-tip:hover [role=tooltip] {display:block}}
     .assumption-fields input[type=checkbox] {width:auto}
@@ -994,7 +1184,7 @@ function initializeDashboardUI() {
     .chart-panel {border:0; border-top:1px solid var(--line); border-radius:0; box-shadow:none; padding:16px 0; background:transparent}
     #comparePanel .chart-grid:empty {display:none}
     h1 {font-size:32px} .metric strong {font-size:22px; overflow-wrap:anywhere}
-    @media(max-width:700px) {.context-fields {display:grid; grid-template-columns:repeat(2,minmax(0,1fr))} .context-fields label {min-width:0} .context-fields select {width:100%} .qualification-approach, .assumption-fields > label {grid-column:1 / -1; min-width:0} .segmented-control input {flex:0 0 auto} .segmented-control span {min-width:0; overflow-wrap:anywhere} .context-tip {grid-column:1 / -1; min-width:0} .context-tip [role=tooltip] {left:0; right:auto} h1 {font-size:27px}}
+    @media(max-width:700px) {.context-fields {display:grid; grid-template-columns:repeat(2,minmax(0,1fr))} .context-fields label {min-width:0} .context-fields select {width:100%} .qualification-approach, .assumption-fields > label {grid-column:1 / -1; min-width:0} .segmented-control input {flex:0 0 auto} .segmented-control label {flex:1 1 0; padding:7px 10px; white-space:normal} .segmented-control span {min-width:0; overflow-wrap:anywhere} .context-tip {grid-column:1 / -1; min-width:0} .context-tip [role=tooltip] {left:0; right:auto} h1 {font-size:27px}}
     @media(max-width:360px) {.segmented-control {flex-direction:column} .segmented-control label {min-height:44px} .segmented-control label + label {border-left:0; border-top:1px solid var(--line)}}
   `;
   document.head.append(style);
@@ -1012,9 +1202,9 @@ function initializeDashboardUI() {
       </div></fieldset>
       <span id="finderObjective">Recommendations: A · current rules on past results</span>
       <label>Cutoff method<select id="contextCutoff" aria-describedby="cutoffHelp"><option value="calibrated">Rank-based roll-down factor</option><option value="strict">Strict allocation</option><option value="matched">Matched-slot cutoff</option><option value="density">Match-density boundary</option><option value="scan">15-absence gender-pool scan</option></select></label>
-      <div class="context-tip"><label for="contextRollDownFactor">Additional hypothetical declines per slot</label><div class="factor-input-row"><input id="contextRollDownFactor" type="number" min="0" step="any" inputmode="decimal" aria-describedby="rollDownFactorHelp contextRollDownStatus"><button type="button" class="context-action" id="resetRollDownFactor">Reset to 0</button></div><button type="button" class="context-help" aria-label="Help: roll-down factor" aria-controls="rollDownFactorHelp" aria-expanded="false">?</button><span role="tooltip" id="rollDownFactorHelp">A hypothetical ratio of additional declines per initial slot, not observed declines, a probability, or a percentage of time. Extra positions are slots × factor rounded to the nearest integer, with halves rounded upward. With 30 slots, factors 0, 1 and 2 target ranks 30, 60 and 90. Automatic winner slots are separate.</span><output id="contextRollDownStatus" class="factor-status" aria-live="polite"></output></div>
-      <div class="context-tip"><label class="binary-label"><input type="checkbox" id="contextFallback" aria-describedby="fallbackHelp">Use strict fallback when evidence is unavailable</label><button type="button" class="context-help" aria-label="Help: strict fallback" aria-controls="fallbackHelp" aria-expanded="false">?</button><span role="tooltip" id="fallbackHelp">Use the strict allocation target only when the selected method has no compatible evidence. It remains labelled as a fallback.</span></div>
-      <details id="cutoffHelp"><summary>Method and fallback information</summary><p>The rank factor is a hypothetical scenario. Matched-slot cutoff applies only to original P1 races: it takes the Nth matched starter in the compatible same-cycle championship ranking, where N is the gender-pool slot count. A uses current rules and standard; B uses the historical ranking and standard. Fewer than N matches or incompatible evidence is unavailable, with no strict fallback; matches do not prove acceptance. Density and scan also require an original P1 race and compatible same-cycle matches. Strict fallback applies only to density and scan for P1 races when checked and is labelled.</p></details>
+      <div class="context-tip"><div class="field-head"><label for="contextRollDownFactor">Additional hypothetical declines per slot</label><button type="button" class="context-help" aria-label="Help: roll-down factor" aria-controls="rollDownFactorHelp" aria-expanded="false">?</button><span role="tooltip" id="rollDownFactorHelp">A hypothetical ratio of additional declines per initial slot, not observed declines, a probability, or a percentage of time. Extra positions are slots × factor rounded to the nearest integer, with halves rounded upward. With 30 slots, factors 0, 1 and 2 target ranks 30, 60 and 90. Automatic winner slots are separate.</span></div><div class="factor-input-row"><input id="contextRollDownFactor" type="number" min="0" step="any" inputmode="decimal" aria-describedby="rollDownFactorHelp contextRollDownStatus"><button type="button" class="context-action" id="resetRollDownFactor">Reset to 0</button></div><output id="contextRollDownStatus" class="factor-status" aria-live="polite"></output></div>
+      <div class="context-tip"><div class="field-head"><span>Missing evidence</span><button type="button" class="context-help" aria-label="Help: strict fallback" aria-controls="fallbackHelp" aria-expanded="false">?</button><span role="tooltip" id="fallbackHelp">Use the strict allocation target only when the selected method has no compatible evidence. It remains labelled as a fallback.</span></div><label class="binary-label"><input type="checkbox" id="contextFallback" aria-describedby="fallbackHelp">Use strict fallback when evidence is unavailable</label></div>
+      <details id="cutoffHelp"><summary>Method and fallback information</summary><p>The rank factor is a hypothetical scenario. Matched-slot cutoff takes the Nth matched starter in the compatible same-cycle championship ranking, where N is the gender-pool slot count. A uses current rules and standard for original P1 races and known R1-R4 race-years; B uses the historical ranking and standard for original P1 races and, for R1-R4 race-years, the Nth matched rank in the actual age-group ranking (N = age-group slots, a matched age-group winner counts). Fewer than N matches or incompatible evidence is unavailable, with no strict fallback; matches do not prove acceptance. Density and scan require an original P1 race and compatible same-cycle matches. Strict fallback applies only to density and scan for P1 races when checked and is labelled.</p></details>
     </div><div class="context-years"><button type="button" id="contextReturn" class="context-action" hidden>Back to ranking</button><span id="contextYearCount"></span>
       <button type="button" class="context-action" data-years-action="all">All</button>
       <button type="button" class="context-action" data-years-action="none">None</button>
@@ -1076,17 +1266,24 @@ function initializeDashboardUI() {
   // Step 3: targets of the selected race with roll-down evidence.
   const content = document.getElementById("qualificationContent");
   const allocation = stepSection("Slot allocation detail, what-if slot overrides and target charts", ...content.children);
+  const methodTimeChart = allocation.querySelector("#qualificationChart");
+  methodTimeChart.insertAdjacentHTML("beforebegin", '<h3 class="chart-subtitle">Time needed by method</h3>');
+  methodTimeChart.insertAdjacentHTML("afterend", '<h3 class="chart-subtitle">Roll-down depth: ranks beyond the initial allocation</h3><svg id="qualificationRollDownChart" class="chart" viewBox="0 0 1000 330"></svg><p id="qualificationChartNote" class="note"></p>');
   const overview = document.createElement("section");
   overview.id = "targetOverview";
   const raceSelector = document.createElement("div");
   raceSelector.id = "targetRaceSelector";
   const targetEvidence = document.createElement("section");
   targetEvidence.id = "targetEvidencePlot";
-  targetEvidence.innerHTML = '<div class="chart-heading"><h2>Ranked championship evidence</h2><label class="binary-label"><input type="checkbox" id="targetEvidenceExpand">Show later boundaries and stopping gaps</label></div><p id="targetEvidenceNote" class="note"></p><div class="evidence-scroll"><div id="targetEvidenceChart"></div></div><div id="targetEvidenceTooltip" role="tooltip" hidden></div>';
+  const keyDot = color => `<svg viewBox="0 0 14 14" aria-hidden="true"><circle cx="7" cy="7" r="3.5" fill="${color}"/></svg>`;
+  targetEvidence.innerHTML = `<div class="chart-heading"><h2>Ranked championship evidence</h2><label class="binary-label"><input type="checkbox" id="targetEvidenceExpand">Show later boundaries and stopping gaps</label></div><p id="targetEvidenceNote" class="note"></p>
+    <ul class="evidence-key" aria-label="Plot key"><li>${keyDot(evidenceColors.matched)}Matched WC starter</li><li>${keyDot(evidenceColors.unmatched)}Not matched</li><li>${keyDot(evidenceColors.winner)}Age-group winner</li><li><span class="evidence-band" style="--band:${evidenceColors.density}"></span>Density support</li><li><span class="evidence-band" style="--band:${evidenceColors.scan}"></span>Scan stopping gap</li>${["strict", "matched", "density", "scan", "calibrated", "reported"].map(mode => `<li>${evidenceSwatch(mode)}${escapeHtml(cutoffLabels[mode])}</li>`).join("")}</ul>
+    <div class="evidence-scroll"><div id="targetEvidenceChart"></div></div><div id="targetEvidenceTooltip" role="tooltip" hidden></div>`;
   const konaPanel = embedPanel(document.getElementById("konaPanel"));
   const evidence = stepSection("World Championship start-list evidence (Kona + Nice): who qualified where, and how far slots rolled down", konaPanel);
   evidence.id = "wcEvidence";
-  content.append(raceSelector, overview, targetEvidence, stepSection("Compare cutoff approaches by year", selectedSummary), allocation, evidence);
+  document.getElementById("qualificationNote").before(raceSelector);
+  content.append(overview, targetEvidence, stepSection("Compare cutoff approaches by year", selectedSummary), allocation, evidence);
   document.getElementById("targetEvidenceExpand").addEventListener("change", renderTargetEvidence);
   attachEvidenceTooltips(targetEvidence);
   ["konaGender", "konaAgeGroup"].forEach(id => document.getElementById(id).closest("label").classList.add("local-context-control"));

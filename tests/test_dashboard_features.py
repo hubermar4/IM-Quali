@@ -74,7 +74,7 @@ class DashboardUiContractTests(unittest.TestCase):
         self.assertIn(".context-tip {grid-column:1 / -1; min-width:0}", self.html)
         self.assertIn(".context-tip [role=tooltip] {left:0; right:auto}", self.html)
         self.assertIn(
-            ".factor-input-row {display:flex; align-items:center; gap:6px; padding-right:38px}",
+            ".factor-input-row {display:flex; align-items:center; gap:6px}",
             self.html,
         )
 
@@ -101,7 +101,9 @@ const duration = value => String(value);
 const qualificationDuration = value => String(value);
 const currentStandard = {scope:"gender",division:"M50-54",performanceSlots:30,ratio:0.8,needed:35000,winner:34000};
 const historicalStandard = {scope:"gender",division:"M50-54",performanceSlots:30,ratio:0.9,needed:34500,winner:31000};
-const strictQualificationStandard = (event,year,gender,ageGroup,system) => ({
+let ageGroupStrict = null;
+const strictQualificationStandard = (event,year,gender,ageGroup,system) => system === "historical" && ageGroupStrict
+    ? {...ageGroupStrict,year} : ({
     ...(system === "current" ? currentStandard : historicalStandard),year,automaticSlots:4,slots:2,
 });
 const makePool = (rankingCycle,matchedRanks) => {
@@ -199,13 +201,53 @@ assert.match(get("current").unavailableReason,/different qualifying cycle/);
 trace.counterfactual_summaries=[currentPool]; trace.summaries.all=[historicalPool];
 
 targets[0]={year:"2025",gender:"Male",division:"M50-54",slot_scope:"age group",
-    source:{method:"legacy",cycles:["2019"]}};
-for (const system of ["current","historical"]) {
-    const legacy=get(system);
-    assert.equal(legacy.available,false);
-    assert.equal(legacy.needed,null);
-    assert.match(legacy.unavailableReason,/age-group allocation.*unsupported/);
+    source:{method:"legacy",cycles:["2026"]}};
+const historicalLegacy=get("historical");
+assert.equal(historicalLegacy.available,false);
+assert.equal(historicalLegacy.needed,null);
+assert.match(historicalLegacy.unavailableReason,/age-group allocation.*unsupported/);
+const currentLegacy=get("current");
+assert.equal(currentLegacy.available,true);
+assert.equal(currentLegacy.matchedCutoffRank,31);
+assert.equal(currentLegacy.needed,Math.max(currentStandard.winner,30030/0.8));
+assert.match(currentLegacy.cutoffSource,/original R1-R4 race: these starters qualified through age-group slots/);
+for (const mode of ["density","scan"]) {
+    assert.equal(get("current",mode).available,false);
+    assert.match(get("current",mode).unavailableReason,/age-group allocation.*unsupported/);
 }
+// B R1-R4: Nth matched rank in the actual age-group ranking; a matched age-group winner counts.
+ageGroupStrict = {scope:"age group",division:"M50-54",slots:3,needed:36002,winner:null};
+const ageGroupPool = {event_id:"race",year:"2025",gender:"Male",slot_scope:"age group",division:"M50-54",pool_slots:3,
+    kona_cycle:"2026",ranking_cycle:"2026",pool_size:12,
+    ranking_evidence:Array.from({length:12},(_,index)=>[36000+index,null,[2,4].includes(index)?1:0,index === 0])};
+trace.summaries.all=[ageGroupPool];
+const historicalAgeGroup=get("historical");
+assert.equal(historicalAgeGroup.available,true);
+assert.equal(historicalAgeGroup.matchedCutoffRank,5);
+assert.equal(historicalAgeGroup.matchedPoolStarters,3);
+assert.equal(historicalAgeGroup.needed,36004);
+assert.equal(historicalAgeGroup.ageGraded,null);
+assert.match(historicalAgeGroup.cutoffSource,/rank 5 is matched age-group finisher 3 of 3 for 3 age-group slots \(a matched age-group winner counts\)/);
+assert.equal(get("current").matchedCutoffRank,31);
+for (const mode of ["density","scan"]) assert.match(get("historical",mode).unavailableReason,/age-group allocation.*unsupported/);
+ageGroupPool.ranking_evidence[0][3]=false;
+const withoutWinner=get("historical");
+assert.equal(withoutWinner.available,false);
+assert.equal(withoutWinner.needed,null);
+assert.match(withoutWinner.unavailableReason,/only 2 matched age-group ranks for 3 age-group slots/);
+ageGroupPool.ranking_evidence[0][3]=true;
+ageGroupPool.pool_slots=4;
+assert.match(get("historical").unavailableReason,/changed age-group allocation/);
+ageGroupPool.pool_slots=3;
+ageGroupPool.kona_cycle="2019";
+assert.match(get("historical").unavailableReason,/different qualifying cycle/);
+ageGroupPool.kona_cycle="2026";
+trace.summaries.all=[historicalPool];
+ageGroupStrict=null;
+targets[0]={year:"2025",gender:"Male",division:"M50-54",slot_scope:"age group",
+    source:{method:"legacy",cycles:["2019"]}};
+assert.match(get("current").unavailableReason,/no World Championship start list for qualifying cycle 2019/);
+assert.match(get("historical").unavailableReason,/age-group allocation.*unsupported/);
 targets[0]={year:"2025",gender:"Male",division:"M50-54",slot_scope:"gender",standard_cycle:"2026",
     source:{method:"performance",cycles:["2026"]}};
 
@@ -581,9 +623,10 @@ assert.match(output.textContent,/not observed or calibrated/);
 
     @unittest.skipUnless(shutil.which("node"), "Node.js is required for dashboard UI tests")
     def test_rank_evidence_plot_keeps_scopes_and_full_stopping_gap(self):
-        source = (Path(__file__).resolve().parents[1] / "src" / "dashboard_ui.js").read_text()
-        helper = source[source.index("function evidenceRankAtOrBelow("):source.index("function decorateDashboard()")]
-        app = (Path(__file__).resolve().parents[1] / "src" / "dashboard_app.js").read_text()
+        source = (Path(__file__).resolve().parents[1] / "src" / "dashboard_ui.js").read_text(encoding="utf-8")
+        helper = source[source.index("const cutoffLabels ="):source.index("const cutoffApproaches =")]
+        helper += source[source.index("function evidenceRankAtOrBelow("):source.index("function decorateDashboard()")]
+        app = (Path(__file__).resolve().parents[1] / "src" / "dashboard_app.js").read_text(encoding="utf-8")
         helper += app[app.index("    function duration("):app.index("    function pace(")]
         helper += app[app.index("    function manualKonaCutoff("):app.index("    function championshipVenues(")]
         helper += app[app.index("    function calibratedStandard("):app.index("    function easiestQualificationStandard(")]
@@ -617,11 +660,16 @@ const target = year => ({year,division:"M50-54",slot_scope:"age group",source:{m
     times:Array.from({length:140},(_,index)=>index ? 33000+index : null)});
 const DATASETS = {race:{group:"im",historical_qualification:{targets:[target("2017"),target("2025")]},
     qualification:{standard_cycle:"2026",ratios:{"M50-54":0.8,"M45-49":0.8},pools:Object.fromEntries(["2017","2025"].map(year=>[year,
-        {male:Array.from({length:145},(_,index)=>({division:"M50-54",age_graded:30000+index}))}]))}},other:{group:"im"},im_kona:{kona_traces:{
+        {male:Array.from({length:145},(_,index)=>({division:"M50-54",age_graded:30000+index})),winners:{"M45-49":40000,"F50-54":33000}}]))}},other:{group:"im"},im_kona:{kona_traces:{
     2017:makeTrace("2017",historicalPools[2017],currentPools[2017]),
     2025:makeTrace("2025",historicalPools[2025],currentPools[2025]),
     2026:makeTrace("2026",historicalP1,currentP1,"2025",true)}}};
-const elements = {targetEvidencePlot:{},targetEvidenceExpand:{checked:false},targetEvidenceNote:{},targetEvidenceChart:{},targetEvidenceTooltip:{}};
+const elements = {targetEvidencePlot:{},targetEvidenceExpand:{checked:false},targetEvidenceNote:{},targetEvidenceChart:{},targetEvidenceTooltip:{},
+    qualificationChartTitle:{},qualificationChartNote:{},qualificationRollDownChart:{}};
+const charts = {};
+const lineChart = (id,labels,series,format,options) => { charts[id] = {labels,series,format,options}; };
+const isQualifyingEvent = () => true;
+const divisionFor = (gender,ageGroup) => `${gender === "Male" ? "M" : "F"}${ageGroup}`;
 const document = {getElementById:id=>elements[id]};
 DATASETS.im_kona.kona_traces[2017].summaries.all.push({...historicalPools[2017],division:"M45-49"});
 let visible = ["2017","2025"];
@@ -655,28 +703,39 @@ assert.match(chart,/data-evidence-year="2017"/);
 assert.match(chart,/data-evidence-year="2025"/);
 assert.match(chart,/Age group 50-54 rank/);
 assert.match(chart,/Race year 2017; Age group 50-54 rank: 1; Finishing time: 09:10:00/);
-assert.match(chart,/Matched AG winners \(gold\)/);
-assert.match(chart,/evidence-winner-swatch/);
-assert.match(elements.targetEvidenceNote.textContent,/ranks 1-125/);
+assert.doesNotMatch(chart,/Matched AG winners|evidence-winner-list|evidence-legend/);
+assert.match(chart,/class="evidence-methods"/);
+assert.match(chart,/Beyond allocation/);
+assert.match(chart,/showing ranks 1-140 of 140/);
+assert.match(elements.targetEvidenceNote.textContent,/Age-group panels are scaled to their own slots and boundaries \(expand to see the whole age-group field\)/);
+assert.doesNotMatch(elements.targetEvidenceNote.textContent,/Pool panels/);
+assert.equal(ageGroupAxisMaximum([3,3,7,14,12],180),20);
+assert.equal(ageGroupAxisMaximum([15,15,68,80,37],180),100);
+assert.equal(ageGroupAxisMaximum([3],8),8);
+assert.equal(ageGroupAxisMaximum([3,null,undefined],180),15);
 elements.targetEvidenceExpand.checked=true;
 renderTargetEvidence();
 chart = elements.targetEvidenceChart.innerHTML;
 let panels = chart.split('<div class="evidence-year"').slice(1);
 assert.match(panels[0],/Strict allocation: rank 3/);
 assert.match(panels[0],/Rank-based roll-down factor: rank 48/);
-assert.doesNotMatch(panels[0],/Exploratory density breakpoint: rank|15-absence gender-pool scan: rank|manual extra/i);
+assert.doesNotMatch(panels[0],/Match-density boundary: rank|15-absence gender-pool scan: rank|manual extra/i);
 assert.match(panels[0],/Historical age-group density boundary, plot only: rank 109/);
 assert.match(panels[0],/Historical five-unmatched age-group scan, plot only: ranks 111 to 115/);
 assert.match(panels[0],/Race year 2017; Age group 50-54 rank: 110; Finishing time: 09:11:49/);
-assert.match(panels[0],/Match status: matched age-group rank 1; excluded from legacy plot density\/scan inputs and counts/);
-assert.match(panels[0],/<circle[^>]+fill="#d4a017"/);
+assert.match(panels[0],/Match status: matched age-group rank 1 \(Matched Winner\); age-group winner, not a P1 automatic-slot winner; excluded from legacy plot density\/scan inputs and counts/);
+assert.match(panels[0],/<circle class="evidence-winner"[^>]+fill="#d4a017"/);
+assert.match(panels[0],/age-group rank 1 matched/);
 assert.match(panels[0],/2 candidate races/);
+assert.match(panels[0],/<td>[^<]*<svg class="evidence-swatch"[\s\S]*?Legacy density boundary <small>\(plot only\)<\/small><\/td><td class="num">109<\/td><td class="num">\+106<\/td>/);
+assert.match(panels[0],/<td class="num">3<\/td><td class="num">0<\/td>/);
 assert.match(panels[1],/Strict allocation: rank 7/);
 assert.match(panels[1],/Rank-based roll-down factor: rank 112/);
-assert.doesNotMatch(panels[1],/Exploratory density breakpoint: rank|15-absence gender-pool scan: rank|manual extra/i);
-assert.match(panels[1],/B legacy plot only/);
+assert.doesNotMatch(panels[1],/Match-density boundary: rank|15-absence gender-pool scan: rank|manual extra/i);
+assert.match(panels[1],/Legacy density boundary <small>\(plot only\)<\/small>/);
+assert.match(panels[1],/not applicable: the original race used age-group allocation \(R1-R4\)/);
 assert.doesNotMatch(chart,/Kona Standard time/);
-assert.match(elements.targetEvidenceNote.textContent,/ranks 1-125/);
+assert.match(elements.targetEvidenceNote.textContent,/and show the whole age-group field/);
 dashboardContext.ageGroup="45-49";
 renderTargetEvidence();
 assert.match(elements.targetEvidenceChart.innerHTML,/Age group 45-49 rank/);
@@ -687,7 +746,7 @@ for (const mode of ["density","scan"]) {
     qualificationAssumptions.mode = mode;
     qualificationAssumptions.densityFallback = true;
     renderTargetEvidence();
-    assert.doesNotMatch(elements.targetEvidenceChart.innerHTML,/Exploratory density breakpoint: rank|15-absence gender-pool scan: rank|Reported last accepted: rank|Strict fallback:/i);
+    assert.doesNotMatch(elements.targetEvidenceChart.innerHTML,/Match-density boundary: rank|15-absence gender-pool scan: rank|Reported last accepted: rank|Strict fallback:/i);
 }
 qualificationAssumptions.densityFallback = false;
 for (const pool of Object.values(pools)) Object.assign(pool,{slot_scope:"gender",division:null,ranking_cycle:"2026",
@@ -700,24 +759,60 @@ historicalP1.ranking_evidence = pools[2025].ranking_evidence;
 qualificationSystem = "historical";
 renderTargetEvidence();
 panels = elements.targetEvidenceChart.innerHTML.split('<div class="evidence-year"').slice(1);
-assert.match(panels[0],/B legacy plot only/);
-assert.doesNotMatch(panels[0],/Exploratory density breakpoint: rank|15-absence gender-pool scan: rank|Reported last accepted: rank/i);
-assert.match(panels[1],/15-absence scan/);
+assert.match(panels[0],/Legacy density boundary <small>\(plot only\)<\/small>/);
+assert.doesNotMatch(panels[0],/Match-density boundary: rank|15-absence gender-pool scan: rank|Reported last accepted: rank/i);
+assert.match(panels[1],/15-absence gender-pool scan/);
 assert.match(panels[1],/Matched-slot cutoff: rank 31/);
 qualificationSystem = "current";
 renderTargetEvidence();
 chart = elements.targetEvidenceChart.innerHTML;
 assert.equal((chart.match(/Stopping gap: ranks 116 to 130/g) || []).length,1);
 assert.match(chart,/Race year 2025; Male performance pool rank: 1; Finishing time: 09:43:20; age-graded time: 08:20:00/);
-assert.match(chart,/15 consecutive unmatched/);
+assert.match(chart,/stopping gap 116-130/);
 assert.match(chart,/separate automatic-slot route; no performance-pool rank/);
 assert.match(chart,/Matched Winner/);
-assert.match(chart,/evidence-winner-marker/);
-assert.match(chart,/M50-54; Matched Winner; finishing time 08:55:00; separate automatic-slot route; no performance-pool rank/);
+assert.match(chart,/class="evidence-winner"/);
+assert.match(chart,/M50-54; Matched Winner; finishing time 08:55:00; separate automatic-slot route; no performance-pool rank; matched/);
+assert.match(chart,/AG winner M45-49; name unavailable; finishing time 11:06:40; separate automatic-slot route; no performance-pool rank; not matched on the World Championship start list; age-graded 08:53:20; slower than every ranked pool finisher by age-graded time; drawn right of displayed rank 130/);
+assert.match(chart,/AG winner M50-54; Matched Winner[^"]*faster than every ranked pool finisher by age-graded time/);
+assert.match(chart,/2 AG winners, 1 matched/);
+assert.doesNotMatch(chart,/F50-54/);
+panels = chart.split('<div class="evidence-year"').slice(1);
+assert.ok(panels[1].indexOf("AG winner M45-49") > panels[1].lastIndexOf("Male performance pool rank: 130;"));
+assert.doesNotMatch(panels[1],/Male performance pool rank: [0-9]+; Finishing time: 08:55:00/);
 assert.equal(DATASETS.im_kona.kona_traces[2026].counterfactual_winners[0].matches[0].pool_rank,null);
 assert.match(chart,/Rank-based roll-down factor: rank 112/);
 assert.match(chart,/Matched-slot cutoff: rank 30/);
 assert.doesNotMatch(chart,/auto median/);
+renderTargetMethodCharts();
+const chartValues = id => Object.fromEntries(charts[id].series.map(item=>[item.mode,item.values]));
+assert.equal(elements.qualificationChartTitle.textContent,"Current-rules time needed and roll-down · M50-54");
+assert.deepEqual(charts.qualificationChart.labels,["2017","2025"]);
+let methodTimes = chartValues("qualificationChart");
+assert.deepEqual(methodTimes.strict,[50000,50000]);
+assert.deepEqual(methodTimes.matched,[50000,50000]);
+assert.deepEqual(methodTimes.density,[null,50000]);
+assert.deepEqual(methodTimes.reported,[null,null]);
+let depths = chartValues("qualificationRollDownChart");
+assert.deepEqual(depths.strict,[0,0]);
+assert.deepEqual(depths.matched,[27,23]);
+assert.deepEqual(depths.calibrated,[45,105]);
+assert.deepEqual(depths.density,[null,112]);
+assert.deepEqual(depths.scan,[null,108]);
+assert.equal(charts.qualificationRollDownChart.options.zeroBaseline,true);
+assert.equal(charts.qualificationRollDownChart.format(12),"+12");
+assert.match(elements.qualificationChartNote.textContent,/^A: current rules on historical results/);
+assert.match(elements.qualificationChartNote.textContent,/re-rank starters who qualified through age-group slots/);
+qualificationSystem = "historical";
+renderTargetMethodCharts();
+assert.equal(elements.qualificationChartTitle.textContent,"Historical time needed and roll-down · M50-54");
+methodTimes = chartValues("qualificationChart");
+depths = chartValues("qualificationRollDownChart");
+assert.deepEqual(methodTimes.matched,[50000,50000]);
+assert.deepEqual(methodTimes.density,[null,null]);
+assert.deepEqual(depths.matched,[28,24]);
+assert.match(elements.qualificationChartNote.textContent,/^B: historically correct rules/);
+qualificationSystem = "current";
 qualificationAssumptions.rollDownFactor = 1.1;
 renderTargetEvidence();
 chart = elements.targetEvidenceChart.innerHTML;
@@ -744,7 +839,7 @@ assert.match(elements.targetEvidenceChart.innerHTML,/reported cutoff 08:20:24; m
 qualificationAssumptions.densityFallback=true;
 renderTargetEvidence();
 assert.match(elements.targetEvidenceChart.innerHTML,/Strict fallback: insufficient evidence/);
-assert.doesNotMatch(elements.targetEvidenceChart.innerHTML,/Exploratory density breakpoint: rank/);
+assert.doesNotMatch(elements.targetEvidenceChart.innerHTML,/Match-density boundary: rank/);
 qualificationAssumptions.densityFallback=false;
 visible=["2025"];
 renderTargetEvidence();

@@ -234,12 +234,19 @@ starters (*inferred*); in 2021 and 2022 the quota was equal.
     a race-page age-group table must not override it.
 - **Current mode** applies the latest published race allocation and standards
   to every historical field (a counterfactual).
-- Matched-slot cutoff, match-density, and 15-absence scan estimates require an actual P1 race and
+- Match-density and 15-absence scan estimates require an actual P1 race and
   compatible same-cycle gender-pool matches. They are unavailable as
-  qualification methods for R1-R4 races and unresolved cycles. In objective B's
+  qualification methods for R1-R4 races and unresolved cycles. The matched-slot
+  cutoff is also available for race-years with a known R1-R4 cycle. Objective A
+  uses that cycle's championship roster re-ranked under current rules (those
+  starters qualified through age-group slots, so this is a counterfactual
+  mapping, not observed pool roll-down). Objective B uses the actual raw
+  age-group ranking: N is the race-year's age-group slots, and a matched
+  age-group rank-1 finisher counts because R1-R4 had no separate winner route.
+  In objective B's
   ranked-evidence plot only, an R1-R4 race may show a descriptive density
-  boundary and five-unmatched scan in its actual age-group ranking. The matched
-  age-group rank-1 finisher is shown gold at the actual rank and raw time but is
+  boundary and five-unmatched scan in its actual age-group ranking. The
+  age-group rank-1 finisher, matched or not, is shown as a gold dot at the actual rank and raw time but is
   excluded from the plot-only density/scan inputs and counts; this is not a P1
   automatic-slot route. These markers are not qualification methods or results
   and do not affect targets, rank factors, Finder chances, calibration or model
@@ -247,7 +254,8 @@ starters (*inferred*); in 2021 and 2022 the quota was equal.
   establish absence or declined slots.
 - The matched-slot cutoff ignores unmatched championship ranks and selects the
   Nth rank with a matched result from that exact qualifying race-year, where N
-  is the compatible gender performance-pool allocation. A ranks the same-cycle
+  is the compatible gender performance-pool allocation (B R1-R4: the age-group
+  allocation in the actual age-group ranking). A ranks the same-cycle
   roster under current rules and standards; B uses the historical ranking and
   cycle standard. Fewer than N matched ranks, or incompatible cycle, roster,
   ranking, slots, or standard, is unavailable without strict fallback. P1

@@ -28,14 +28,22 @@ factor, match density and the 15-absence scan. Finder always uses objective A;
 Targets may use A or B.
 The original race's verified qualifying cycle determines eligibility, not its
 calendar year. Actual P1 races can use all five selectable approaches, subject
-to evidence availability; actual R1-R4 races support strict and factor only. A
+to evidence availability; actual R1-R4 races support strict, matched-slot and
+factor. A
 uses the current gender pool, allocation and standards. B uses the actual
 cycle's gender pool or legacy age-group allocation and ranking. An unknown
 cycle cannot support match-based methods; B also requires a verified historical
 allocation.
 
-Matched-slot cutoff, density, and scan estimates for targets and Finder require
-compatible same-cycle P1 championship matches. The matched-slot cutoff counts
+Density and scan estimates for targets and Finder require compatible
+same-cycle P1 championship matches. The matched-slot cutoff also applies to
+race-years with a known R1-R4 cycle. In A (and therefore in the Finder) it
+re-ranks that cycle's championship roster under current rules. Those starters
+qualified through age-group slots, so the A boundary for R1-R4 years is a
+counterfactual mapping, not observed pool roll-down. In B it uses the actual
+raw age-group ranking: N is the race-year's age-group slots, and a matched
+age-group rank-1 finisher counts because R1-R4 had no separate winner route.
+For P1 the matched-slot cutoff counts
 only pool ranks with a matched result from that exact qualifying race-year,
 ignores unmatched World Championship ranks, and selects the Nth matched rank
 for N gender performance-pool slots. A re-ranks the race-year's championship
@@ -45,7 +53,8 @@ standard, is unavailable with no strict fallback. Separate automatic P1 age-grou
 winners are excluded from pool ranks and the match count. This boundary is not
 an acceptance record, density breakpoint, absence scan, or rank-factor
 scenario. Historical B legacy evidence plots may show a
-descriptive age-group density boundary and five-unmatched scan, but those
+descriptive age-group density boundary and five-unmatched scan (both exclude
+the age-group winner), but those
 markers are plot-only and do not affect targets, rank factors, Finder chances,
 calibration or metrics. Missing P1 evidence may use a labelled strict fallback
 only when explicitly enabled; legacy or unknown methods cannot use this
@@ -74,25 +83,39 @@ year's top-20% finish-time threshold divided by its overall course factor;
 the number of finishers and contributing years are shown. These field figures
 are descriptive, not additional inputs to the chance model.
 
-Ranked evidence shows all selected race-years in separate panels on a common
-Ranked evidence shows all selected race-years in separate panels on a common
-1-100 rank axis, expandable to available strict, matched-slot, and factor ranks
-and, for P1, density, scan and supported reported boundaries and complete
-stopping gaps.
-Historical legacy panels offer only strict and factor target methods; their
+Ranked evidence shows all selected race-years in separate panels. Pool panels
+share a 1-100 rank axis, expandable to available strict, matched-slot, and
+factor ranks and, for P1, density, scan and supported reported boundaries and
+complete stopping gaps. Historical age-group panels scale to their own slots,
+factor rank and plot-only markers (wide density support bands are clipped) and
+expand to the whole age-group field.
+Historical legacy panels offer strict, matched-slot (Nth matched age-group
+rank, a matched winner counts) and factor target methods; their
 ranked evidence plot also shows a descriptive age-group density boundary and
 five-unmatched scan markers, which are not qualification results and do not
-affect targets, Finder chances or model metrics. A matched age-group rank-1
-finisher is shown gold at the actual rank and raw time, excluded from those
-plot-only density/scan inputs and counts, and is not a P1 automatic-slot winner.
-P1 winners instead appear in a separate accessible gold lane with their age
-group, name and finish time, without a performance-pool rank. Compatible
-starter matches remain visible as evidence, not proof of acceptance.
-Each year's legend lists the rank and time for its applicable approaches,
-including overlapping or unavailable boundaries. The factor marks its
+affect targets, Finder chances or model metrics. Age-group winners are gold
+dots, matched or not. In a legacy panel the winner is age-group rank 1, shown
+at the actual rank and raw time, excluded from those plot-only density/scan
+inputs and counts (it does count in B's age-group matched-slot cutoff when
+matched), and is not a P1 automatic-slot winner. In a
+performance-pool panel each winner keeps the separate automatic-slot route:
+its dot sits in the matched or not-matched row where its age-graded time
+falls, but it holds no pool rank and never enters pool ranks, matched-slot
+counts, density or scan; winners beyond the displayed axis are drawn to its
+right. Compatible starter matches remain visible as evidence, not proof of
+acceptance.
+Each year's method table lists rank, ranks beyond the initial allocation,
+finish time, age-graded time (pool panels), mapped target and basis for its
+applicable approaches, including overlapping or unavailable boundaries and the
+plot-only legacy markers; pool-only methods are marked not applicable for
+R1-R4 or unknown cycles. The step's "time needed and roll-down" charts plot the
+same per-year method rows: the mapped target time of every applicable method
+and its ranks beyond the initial allocation (strict = 0), excluding strict
+fallbacks and plot-only legacy markers. Ranks beyond the initial allocation are a model or
+scenario depth, not a count of declines. The factor marks its
 calculated rank; automatic winners remain separate. Ranks beyond the last
 finisher have no extrapolated time. Reported minute-precision cutoffs do not
-establish an exact rank. Hover, keyboard focus,
+establish an exact rank; their reported pool time is shown. Hover, keyboard focus,
 or touch reveals the rank, finishing time, available age-graded time, year,
 and match status; missing compatible evidence is labelled per year. Current
 ranks use the current-rules pool, never the historical pool ranking. A match does not prove
