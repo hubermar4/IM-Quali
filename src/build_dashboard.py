@@ -935,7 +935,7 @@ def load_course_factors(datasets):
   return factors, models
 
 
-def current_pool_counterfactual_calendar(calendar, events, event_names):
+def current_pool_counterfactual_calendar(calendar, events, event_names, group="im"):
   """A cycle's own qualifying race-years, re-allocated with each race's latest slots.
 
   Kona starters only reveal the roll-down of the race-years that qualified for
@@ -946,13 +946,86 @@ def current_pool_counterfactual_calendar(calendar, events, event_names):
   rows = []
   for race in calendar:
     event = events.get(name_to_event.get(race["race_name"]), {})
-    total_slots = event.get("qualification_slots")
-    if event.get("group") != "im" or not event.get("qualifying", True):
+    slots = event.get("qualification_slots")
+    if event.get("group") != group or not event.get("qualifying", True):
       continue
-    if not isinstance(total_slots, int) or total_slots <= 0:
+    if group == "703":
+      if not isinstance(slots, dict) or not all(isinstance(slots.get(key), int) and slots[key] > 0 for key in ("male", "female")):
+        continue
+      rows.append({**race, "male_qualifiers": slots["male"], "female_qualifiers": slots["female"],
+                   "total_qualifiers": slots["male"] + slots["female"]})
       continue
-    rows.append({**race, "total_qualifiers": total_slots})
+    if not isinstance(slots, int) or slots <= 0:
+      continue
+    rows.append({**race, "total_qualifiers": slots})
   return rows
+
+
+def half_distance_calendar(cycle):
+  """70.3 qualifying race-years of one cycle from their official per-gender allocation."""
+  rows = []
+  for (event_id, year), source in sorted(HISTORICAL_SLOT_SOURCES.items()):
+    event = EVENTS.get(event_id, {})
+    if event.get("group") != "703" or source.get("cycles") != [str(cycle)]:
+      continue
+    if source.get("male") is None or source.get("female") is None:
+      continue
+    rows.append({
+      "qualification_cycle": str(cycle), "race_name": event_id, "event_year": year,
+      "race_date": "", "source_url": source.get("source_url") or "",
+      "male_qualifiers": source["male"], "female_qualifiers": source["female"],
+      "total_qualifiers": source["male"] + source["female"],
+    })
+  return rows
+
+
+def build_half_distance_traces(historical_targets):
+  """70.3 World Championship traces per cycle; same objectives as the Kona traces."""
+  event_names = {event_id: event_id for event_id, event in EVENTS.items() if event["group"] == "703"}
+  traces = {}
+  for championship_id in sorted(NON_QUALIFYING_EVENTS):
+    championship = EVENTS.get(championship_id)
+    if not championship or championship["group"] != "703":
+      continue
+    venue = _EVENT_REGISTRY["events"].get(championship_id, {}).get("venue") or championship["name"]
+    for cycle, csv_files in championship["years"].items():
+      if cycle in traces:
+        raise ValueError(f"Two 70.3 World Championship start lists for cycle {cycle}")
+      start_list = read_results(csv_files).assign(Venue=venue)
+      calendar = half_distance_calendar(cycle)
+      options = {"module": qualification_half, "group": "703", "default_venue": venue}
+      trace = build_kona_trace(
+        start_list, calendar, EVENTS, read_results, event_names, year=cycle,
+        historical_targets=historical_targets, **options,
+      )
+      counterfactual = build_kona_trace(
+        start_list, current_pool_counterfactual_calendar(calendar, EVENTS, event_names, group="703"),
+        EVENTS, read_results, event_names, year=cycle, historical_targets=historical_targets,
+        ranking_cycle=qualification_half.CURRENT_CYCLE, **options,
+      )
+      add_counterfactual(trace, counterfactual)
+      traces[cycle] = trace
+  return traces
+
+
+def add_counterfactual(trace, counterfactual_trace):
+  trace["counterfactual_summaries"] = [
+    {key: value for key, value in row.items() if key != "manual_pool_times"}
+    for row in counterfactual_trace["summaries"]["all"]
+  ]
+  trace["counterfactual_winners"] = [
+    {
+      "name": starter["name"], "gender": starter["gender"],
+      "matches": [
+        {key: match.get(key) for key in ("event_id", "year", "division", "finish_time", "pool_rank", "initial_slot")}
+        for match in starter["matches"] if match.get("initial_slot") == "Automatic winner"
+      ],
+    }
+    for starter in counterfactual_trace["starters"]
+    if any(match.get("initial_slot") == "Automatic winner" for match in starter["matches"])
+  ]
+  trace["counterfactual_standards"] = counterfactual_trace["standards"]
+  trace["counterfactual_standard_cycle"] = counterfactual_trace["standard_cycle"]
 
 
 def championship_start_list(kona_files, nice_files):
@@ -1029,23 +1102,7 @@ def load_dashboard_data():
       EVENTS, read_results, COACHCOX_EVENT_NAMES, year=cycle,
       historical_targets=historical_targets, ranking_cycle=qualification_full.CURRENT_CYCLE,
     )
-    traces[cycle]["counterfactual_summaries"] = [
-      {key: value for key, value in row.items() if key != "manual_pool_times"}
-      for row in counterfactual_trace["summaries"]["all"]
-    ]
-    traces[cycle]["counterfactual_winners"] = [
-      {
-        "name": starter["name"], "gender": starter["gender"],
-        "matches": [
-          {key: match.get(key) for key in ("event_id", "year", "division", "finish_time", "pool_rank", "initial_slot")}
-          for match in starter["matches"] if match.get("initial_slot") == "Automatic winner"
-        ],
-      }
-      for starter in counterfactual_trace["starters"]
-      if any(match.get("initial_slot") == "Automatic winner" for match in starter["matches"])
-    ]
-    traces[cycle]["counterfactual_standards"] = counterfactual_trace["standards"]
-    traces[cycle]["counterfactual_standard_cycle"] = counterfactual_trace["standard_cycle"]
+    add_counterfactual(traces[cycle], counterfactual_trace)
   if "im_kona" in datasets:
     datasets["im_kona"]["kona_traces"] = traces
     datasets["im_kona"]["kona_trace"] = traces.get("2026")
@@ -1053,6 +1110,7 @@ def load_dashboard_data():
       {"year": str(cycle), "available": str(cycle) in traces}
       for cycle in range(2017, 2027)
     ]
+    datasets["im_kona"]["wc703_traces"] = build_half_distance_traces(historical_targets)
   factors, models = load_course_factors(datasets)
   for event_id, dataset in datasets.items():
       model = models.get(dataset["group"], {})

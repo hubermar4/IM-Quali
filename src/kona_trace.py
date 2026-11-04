@@ -124,8 +124,9 @@ def scan_pool_cutoff(pool_times, matched_ranks, initial_slots, consecutive_absen
 
 
 def build_kona_trace(kona_frame, calendar, events, read_results, event_names, year="2026", historical_targets=None,
-                     ranking_cycle=None):
+                     ranking_cycle=None, module=qualification_full, group="im", default_venue="Kona"):
     ranking_cycle = str(ranking_cycle or year)
+    is_half = group == "703"
     starters = []
     identities = defaultdict(list)
     kona_rows = kona_frame.dropna(how="all").to_dict("records")
@@ -144,7 +145,7 @@ def build_kona_trace(kona_frame, calendar, events, read_results, event_names, ye
             "bib": text_value(row.get("Bib")), "name": text_value(row.get("Name")),
             "country": text_value(row.get("Country")), "gender": gender,
             "division": division, "status": status,
-            "venue": text_value(row.get("Venue")) or "Kona",
+            "venue": text_value(row.get("Venue")) or default_venue,
             "kona_time": seconds_value(row.get("Overall Time")), "matches": [],
         }
         starters.append(starter)
@@ -167,16 +168,20 @@ def build_kona_trace(kona_frame, calendar, events, read_results, event_names, ye
             "year": race_year, "date": race.get("race_date", ""),
             "source_url": race.get("qualification_url") or race.get("source_url", ""),
         }
-        if event.get("group") != "im" or not event.get("qualifying", True) or race_year not in event.get("years", {}):
+        if event.get("group") != group or not event.get("qualifying", True) or race_year not in event.get("years", {}):
             missing.append(info)
             continue
         raw = read_results(event["years"][race_year])
         total_slots = race.get("total_qualifiers")
-        if total_slots is None:
+        gender_slots = (race.get("male_qualifiers"), race.get("female_qualifiers"))
+        if total_slots is None or (is_half and None in gender_slots):
             missing.append({**info, "reason": "No cycle-specific slot allocation"})
             continue
         raw_rows = raw.to_dict("index")
-        legacy = ranking_cycle not in qualification_full.STANDARDS
+        legacy = ranking_cycle not in module.STANDARDS
+        if legacy and is_half:
+            missing.append({**info, "reason": "No cycle-compatible age-group allocation"})
+            continue
         cohorts = []
         if legacy:
             targets = (historical_targets or {}).get((event_id, race_year), [])
@@ -209,16 +214,21 @@ def build_kona_trace(kona_frame, calendar, events, read_results, event_names, ye
                 })
             automatic = set()
         else:
-            result = qualification_full.process_dataframe(race_year, raw.copy(), total_slots=total_slots, cycle=ranking_cycle)
+            if is_half:
+                result = module.process_dataframe(race_year, raw.copy(), male_slots=gender_slots[0],
+                                                  female_slots=gender_slots[1], cycle=ranking_cycle)
+            else:
+                result = module.process_dataframe(race_year, raw.copy(), total_slots=total_slots, cycle=ranking_cycle)
+            slots_key, cutoff_key = ("performance_slots", "cutoff_td") if is_half else ("slots", "cut_td")
             if result is not None:
                 for gender in ("male", "female"):
+                    cutoff = result[f"{gender}_{cutoff_key}"]
                     cohorts.append({
                         "gender": gender.title(), "division": None, "slot_scope": "gender",
-                        "automatic_slots": result[f"{gender}_auto"], "pool_slots": result[f"{gender}_slots"],
+                        "automatic_slots": result[f"{gender}_auto"], "pool_slots": result[f"{gender}_{slots_key}"],
                         "pool_times": [adjusted for _, adjusted in result["pools"][gender]],
                         "row_ids": result["pool_row_ids"][gender],
-                        "strict_cutoff": math.floor(result[f"{gender}_cut_td"].total_seconds())
-                            if result[f"{gender}_cut_td"] is not None else None,
+                        "strict_cutoff": math.floor(cutoff.total_seconds()) if cutoff is not None else None,
                     })
             automatic = set(result["automatic_row_ids"]) if result is not None else set()
         if not cohorts:
@@ -343,9 +353,9 @@ def build_kona_trace(kona_frame, calendar, events, read_results, event_names, ye
             for gender in ("Male", "Female")
         },
         "standard_cycle": ranking_cycle,
-        "standards": {division: ratio for gender_standards in qualification_full.STANDARDS.get(ranking_cycle, ())
+        "standards": {division: ratio for gender_standards in module.STANDARDS.get(ranking_cycle, ())
                   for division, ratio in gender_standards.items()},
-        "slot_scope": "gender" if ranking_cycle in qualification_full.STANDARDS else "age group",
+        "slot_scope": "gender" if ranking_cycle in module.STANDARDS else "age group",
         "covered_races": covered, "missing_races": missing,
         "matched_starters": sum(bool(starter["matches"]) for starter in starters),
         "multiple_candidates": sum(len(starter["matches"]) > 1 for starter in starters),

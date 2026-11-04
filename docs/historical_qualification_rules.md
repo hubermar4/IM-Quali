@@ -183,19 +183,37 @@ Integer allocation:
   qualification page; the 70.3 2026-cycle table differs from the 2027 table
   in every age group (see
   [qualification_703.py](../src/qualification_703.py)).
-- Data race-years: Austria 2026, Barcelona 2025, Frankfurt 2026 (shortened bike
+- Data race-years: Austria 2026, Barcelona 2025, California 2025, Chattanooga
+  2025, Cozumel 2025, Florida 2025, Frankfurt 2026 (shortened bike
   and run), Hamburg 2026, Italy 2025, Kalmar 2025/2026, Copenhagen 2025/2026,
   Lanzarote 2026, Leeds 2026 (swim cancelled), Portugal 2025, Tallinn 2025,
-  Thun 2025/2026, Vitoria 2026, Wales 2025.
+  Texas 2026, Thun 2025/2026, Vitoria 2026, Wales 2025. California and
+  Chattanooga 2025 (55 each), Cozumel 2025 (100), Florida 2025 (55) and Texas
+  2026 (75) come from Coach Cox; the `Qualified` flags match these totals.
+  *Official.*
+- California, Chattanooga, Cozumel and Florida 2022-2024 and Texas 2022-2025
+  are R-era race-years; their Coach Cox cycle is unique and their `Qualified`
+  flags fill the published totals, so the official allocation from the
+  results is used.
+- 70.3 data race-years: Zell am See 2025 (35/35), Valencia 2026 (35/35),
+  Venice-Jesolo 2026, Mallorca 2026 and Kraichgau 2026 (30/30 each); official
+  ironman.com 2026 qualifying-events allocations, confirmed by the `Qualified`
+  flags. The 70.3 World Championship Nice 2026 (men and women in separate
+  files) is the matching start list for this cycle.
 
 ### 2027 cycle (P1)
 
 - Same system as 2026. The Kona Standard table is identical to the 2026
   table; the IRONMAN 70.3 Standard table was updated.
-- Published slots: Barcelona 55, Italy 55, Portugal 55, Tallinn 45, Wales 50;
-  70.3 Zell am See 25 M / 25 W.
-- Data race-years: Tallinn 2026, Wales 2026, Zell am See 2026 (no Coach Cox
-  entry yet; official ironman.com allocations are used).
+- Published slots: Barcelona 55, California 55, Chattanooga 55, Cozumel 100,
+  Florida 55, Italy 55, Portugal 55, Tallinn 45, Wales 50; 70.3 Zell am See,
+  Krakow, Tallinn, Portugal-Cascais and Porec 25 M / 25 W, Italy
+  Emilia-Romagna 30 M / 30 W.
+- Data race-years: California 2026, Chattanooga 2026, Italy 2026, Tallinn
+  2026, Wales 2026; 70.3 Zell am See, Krakow, Tallinn, Emilia-Romagna,
+  Cascais and Porec 2026 (no Coach Cox entry yet; official ironman.com
+  allocations are used and match the `Qualified` flags). No 2027 championship
+  start list exists yet.
 
 ## IRONMAN 70.3 (Zell am See)
 

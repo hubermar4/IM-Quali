@@ -60,7 +60,7 @@
       "date": "2026-09-27",
       "location": "Chattanooga, TN, USA",
       "slots": 55,
-      "event_id": null
+      "event_id": "im_chattanooga"
     },
     {
       "name": "IRONMAN Calella-Barcelona",
@@ -95,7 +95,7 @@
       "date": "2026-10-18",
       "location": "Sacramento, CA, USA",
       "slots": 55,
-      "event_id": null
+      "event_id": "im_california"
     },
     {
       "name": "IRONMAN San Juan",
@@ -109,7 +109,7 @@
       "date": "2026-11-07",
       "location": "Panama City, FL, USA",
       "slots": 55,
-      "event_id": null
+      "event_id": "im_florida"
     },
     {
       "name": "IRONMAN Malaysia",
@@ -123,7 +123,7 @@
       "date": "2026-11-22",
       "location": "Cozumel, Mexico",
       "slots": 100,
-      "event_id": null
+      "event_id": "im_cozumel"
     },
     {
       "name": "IRONMAN Valdivia",

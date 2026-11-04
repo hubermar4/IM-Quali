@@ -164,7 +164,8 @@ starters by age group).
 Open points:
 
 - IRONMAN Austria 2026 F75-79 has one official qualifier time implying 0.6165
-  against the published 0.6150; the published value is kept.
+  against the published 0.6150; the published value is kept. California 2026
+  (2027 cycle), Portugal 2025 and the Kona 2025 results show the same 0.6165.
 - Frankfurt, Kalmar, and Copenhagen 2024 flag only the 2025-cycle women's
   slots, so their 2024-cycle allocation remains reconstructed.
 - Exact .5 gender-split roundings are resolved half-up; no official example

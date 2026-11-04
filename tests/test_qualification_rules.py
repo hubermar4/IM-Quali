@@ -111,6 +111,10 @@ class OfficialStandardTests(unittest.TestCase):
         (qualification_full, "IM_Tallinn/ironmantallinn2026-results.csv", "2027"),
         (qualification_703, "IM_703_ZellAmSee/ironman703zellamsee-kaprun2025-results.csv", "2026"),
         (qualification_703, "IM_703_ZellAmSee/ironman703zellamsee-kaprun2026-results.csv", "2027"),
+        (qualification_full, "IM_Texas/ironmantexas2026-results.csv", "2026"),
+        (qualification_full, "IM_Chattanooga/ironmanchattanooga2026-results.csv", "2027"),
+        (qualification_703, "IM_703_Valencia/ironman703valencia2026-results.csv", "2026"),
+        (qualification_703, "IM_703_Krakow/ironman703krakow2026-results.csv", "2027"),
     )
 
     def test_standards_reproduce_official_qualifier_times(self):

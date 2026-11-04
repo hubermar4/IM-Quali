@@ -2,6 +2,16 @@
   "_comment": "Race-years with shortened or cancelled legs; excluded from course factors.",
   "modified_courses": [
     {
+      "event": "im_chattanooga",
+      "year": "2024",
+      "description": "swim cancelled"
+    },
+    {
+      "event": "im_cozumel",
+      "year": "2023",
+      "description": "swim cancelled"
+    },
+    {
       "event": "im_barcelona",
       "year": "2021",
       "description": "swim cancelled for most athletes"

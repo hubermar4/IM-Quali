@@ -3118,17 +3118,19 @@
       const sourceCycle = source?.cycles?.length === 1 && !source.other_cycles?.length ? String(source.cycles[0]) : null;
       const originalScope = sourceCycle && source?.method === "performance" && target?.slot_scope === "gender" ? "P1"
         : sourceCycle && source?.method === "legacy" && target?.slot_scope === "age group" ? "legacy" : null;
-      const traces = Object.values(DATASETS.im_kona?.kona_traces || {latest: defaultTrace}).filter(Boolean);
+      const traces = DATASETS[eventId].group === "703"
+        ? Object.values(DATASETS.im_kona?.wc703_traces || {}).filter(Boolean)
+        : Object.values(DATASETS.im_kona?.kona_traces || {latest: defaultTrace}).filter(Boolean);
       const currentCycle = DATASETS[eventId].qualification?.standard_cycle;
       const rosterTrace = traces.find(trace => String(trace.year) === sourceCycle);
-      const candidates = DATASETS[eventId].group === "im" ? traces.flatMap(trace => {
+      const candidates = traces.flatMap(trace => {
         const sourceRows = system === "current"
           ? trace.counterfactual_summaries || []
           : trace.summaries?.all || [];
         return sourceRows.filter(row => row.event_id === eventId && row.year === year && row.gender === gender
           && (row.slot_scope !== "age group" || row.division === standard.division))
           .map(pool => ({trace, pool}));
-      }) : [];
+      });
       const compatible = sourceCycle ? candidates.filter(entry => String(entry.trace.year) === sourceCycle) : [];
       const trace = compatible.length === 1 ? compatible[0].trace : null;
       const pool = compatible.length === 1 ? compatible[0].pool : null;
@@ -4550,8 +4552,9 @@ function targetEvidenceEntries(eventId, years) {
       approachStandard(eventId, year, dashboardContext.gender, dashboardContext.ageGroup, qualificationSystem, mode)]));
     const standard = standards.strict;
     const pool = standard?.cutoffPool;
-    const trace = pool && DATASETS.im_kona?.kona_traces?.[pool.kona_cycle];
     const data = DATASETS[eventId];
+    const championshipTraces = data.group === "703" ? DATASETS.im_kona?.wc703_traces : DATASETS.im_kona?.kona_traces;
+    const trace = pool && championshipTraces?.[pool.kona_cycle];
     const historicalRows = data.historical_qualification?.targets?.filter(row => row.year === year) || [];
     const target = historicalRows.find(row => row.division === standard?.division);
     const original = target || historicalRows[0];
@@ -4561,7 +4564,7 @@ function targetEvidenceEntries(eventId, years) {
     const expectedSlots = standard?.scope === "age group" ? standard.slots : standard?.performanceSlots;
     const expectedCycle = qualificationSystem === "current" ? data.qualification?.standard_cycle : sourceCycle;
     const ratio = qualificationSystem === "current" ? trace?.counterfactual_standards?.[standard?.division] : trace?.standards?.[standard?.division];
-    const compatible = matchEligible && DATASETS[eventId]?.group !== "703" && pool && trace && String(trace.year) === sourceCycle
+    const compatible = matchEligible && pool && trace && String(trace.year) === sourceCycle
       && String(pool.kona_cycle) === sourceCycle && expectedCycle
       && String(qualificationSystem === "current" ? trace.counterfactual_standard_cycle : trace.standard_cycle) === String(expectedCycle)
       && String(pool.ranking_cycle) === String(expectedCycle) && Array.isArray(trace.venues?.[dashboardContext.gender]) && trace.venues[dashboardContext.gender].length
@@ -4577,7 +4580,7 @@ function targetEvidenceEntries(eventId, years) {
         return [ratio > 0 ? row.age_graded / ratio : null, row.age_graded, null];
       });
     const hasMatches = Boolean(compatible && pool.ranking_evidence?.length);
-    const evidenceTrace = sourceCycle ? DATASETS.im_kona?.kona_traces?.[sourceCycle] : null;
+    const evidenceTrace = sourceCycle ? championshipTraces?.[sourceCycle] : null;
     const plotScope = qualificationSystem === "current" ? "gender" : standard?.scope;
     const plotRows = qualificationSystem === "current"
       ? evidenceTrace?.counterfactual_summaries || []
@@ -4599,14 +4602,15 @@ function targetEvidenceEntries(eventId, years) {
       ? plotPool?.pool_slots === standard?.slots
       : plotPool?.pool_slots === expectedSlots && Number.isFinite(standard?.ratio)
         && Number.isFinite(plotRatio) && Math.abs(standard.ratio - plotRatio) <= 0.000001;
-    const plotCompatible = Boolean(data.group === "im" && sourceCycle && plotRosterAvailable
+    const plotCompatible = Boolean(sourceCycle && plotRosterAvailable
       && plotPool && plotPool.ranking_evidence && String(plotPool.kona_cycle) === sourceCycle
       && String(plotPool.ranking_cycle) === String(plotRankingCycle)
       && String(plotTraceCycle) === String(plotRankingCycle)
       && plotAllocationMatches
       && (qualificationSystem !== "historical" || plotScope !== "gender"
         || target?.division === standard?.division && String(target?.standard_cycle) === sourceCycle));
-    const plotUnavailableReason = data.group !== "im" ? "No compatible 70.3 World Championship ranking evidence."
+    const plotUnavailableReason = data.group === "703" && !Object.keys(championshipTraces || {}).length
+      ? "No compatible 70.3 World Championship ranking evidence."
       : !sourceCycle ? "Qualifying cycle unknown; corresponding World Championship evidence unavailable."
       : !plotRosterAvailable ? `World Championship roster unavailable for cycle ${sourceCycle} (${dashboardContext.gender}).`
       : plotCandidates.length !== 1 ? "No unique compatible ranked starter evidence for this race-year and cycle."
@@ -4649,7 +4653,8 @@ function targetEvidenceEntries(eventId, years) {
   });
   const methodsFor = entry => {
     const {standard, standards, pool, compatible, ranking, expectedSlots} = entry;
-    const reason = DATASETS[eventId]?.group === "703" ? "No 70.3 World Championship starter list"
+    const reason = DATASETS[eventId]?.group === "703" && !Object.keys(DATASETS.im_kona?.wc703_traces || {}).length
+      ? "No 70.3 World Championship starter list"
       : "No compatible ranked starter evidence for this race-year and cycle";
     const info = (mode, rank, basis = "", noRank = "No rank available") => {
       const result = standards[mode];

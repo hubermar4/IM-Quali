@@ -208,6 +208,11 @@ def process_dataframe(
         'year': year,
         'standard_cycle': cycle,
         'pools': {'male': pool_entries(male_pool), 'female': pool_entries(female_pool)},
+        'pool_row_ids': {
+            'male': male_pool['row_id'].tolist(),
+            'female': female_pool['row_id'].tolist(),
+        },
+        'automatic_row_ids': winners.index.tolist(),
         'winner_times': {
             division: value.total_seconds()
             for division, value in zip(winners['Division'], winners['finish_td'])

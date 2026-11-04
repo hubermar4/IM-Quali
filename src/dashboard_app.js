@@ -2383,17 +2383,19 @@
       const sourceCycle = source?.cycles?.length === 1 && !source.other_cycles?.length ? String(source.cycles[0]) : null;
       const originalScope = sourceCycle && source?.method === "performance" && target?.slot_scope === "gender" ? "P1"
         : sourceCycle && source?.method === "legacy" && target?.slot_scope === "age group" ? "legacy" : null;
-      const traces = Object.values(DATASETS.im_kona?.kona_traces || {latest: defaultTrace}).filter(Boolean);
+      const traces = DATASETS[eventId].group === "703"
+        ? Object.values(DATASETS.im_kona?.wc703_traces || {}).filter(Boolean)
+        : Object.values(DATASETS.im_kona?.kona_traces || {latest: defaultTrace}).filter(Boolean);
       const currentCycle = DATASETS[eventId].qualification?.standard_cycle;
       const rosterTrace = traces.find(trace => String(trace.year) === sourceCycle);
-      const candidates = DATASETS[eventId].group === "im" ? traces.flatMap(trace => {
+      const candidates = traces.flatMap(trace => {
         const sourceRows = system === "current"
           ? trace.counterfactual_summaries || []
           : trace.summaries?.all || [];
         return sourceRows.filter(row => row.event_id === eventId && row.year === year && row.gender === gender
           && (row.slot_scope !== "age group" || row.division === standard.division))
           .map(pool => ({trace, pool}));
-      }) : [];
+      });
       const compatible = sourceCycle ? candidates.filter(entry => String(entry.trace.year) === sourceCycle) : [];
       const trace = compatible.length === 1 ? compatible[0].trace : null;
       const pool = compatible.length === 1 ? compatible[0].pool : null;

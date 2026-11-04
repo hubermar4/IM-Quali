@@ -121,7 +121,9 @@ and match status; missing compatible evidence is labelled per year. Current
 ranks use the current-rules pool, never the historical pool ranking. A match does not prove
 acceptance at the qualifying race; no match does not prove absence or decline.
 Automatic age-group winners are a separate route from the performance pool.
-70.3 championship starter matching is unavailable. The shared year filter
+70.3 championship starter matching uses the 70.3 World Championship start list
+of the same cycle (currently only Nice 2026 for the 2026 cycle; 70.3 race-years
+of other cycles show the evidence as unavailable). The shared year filter
 changes displayed comparisons, not the underlying course fit, DNF training or
 personal-result calibration.
 

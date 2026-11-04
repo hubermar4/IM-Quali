@@ -17,6 +17,22 @@
       "slots": 55,
       "cycle": "2027"
     },
+    "im_california": {
+      "slots": 55,
+      "cycle": "2027"
+    },
+    "im_chattanooga": {
+      "slots": 55,
+      "cycle": "2027"
+    },
+    "im_cozumel": {
+      "slots": 100,
+      "cycle": "2027"
+    },
+    "im_florida": {
+      "slots": 55,
+      "cycle": "2027"
+    },
     "im_france": {
       "slots": 40,
       "cycle": "2026"
@@ -57,6 +73,10 @@
       "slots": 45,
       "cycle": "2027"
     },
+    "im_texas": {
+      "slots": 75,
+      "cycle": "2026"
+    },
     "im_thun": {
       "slots": 40,
       "cycle": "2026"
@@ -71,6 +91,51 @@
     }
   },
   "703": {
+    "im_703_cascais": {
+      "male": 25,
+      "female": 25,
+      "cycle": "2027"
+    },
+    "im_703_emiliaromagna": {
+      "male": 30,
+      "female": 30,
+      "cycle": "2027"
+    },
+    "im_703_jesolo": {
+      "male": 30,
+      "female": 30,
+      "cycle": "2026"
+    },
+    "im_703_kraichgau": {
+      "male": 30,
+      "female": 30,
+      "cycle": "2026"
+    },
+    "im_703_krakow": {
+      "male": 25,
+      "female": 25,
+      "cycle": "2027"
+    },
+    "im_703_mallorca": {
+      "male": 30,
+      "female": 30,
+      "cycle": "2026"
+    },
+    "im_703_porec": {
+      "male": 25,
+      "female": 25,
+      "cycle": "2027"
+    },
+    "im_703_tallinn": {
+      "male": 25,
+      "female": 25,
+      "cycle": "2027"
+    },
+    "im_703_valencia": {
+      "male": 35,
+      "female": 35,
+      "cycle": "2026"
+    },
     "im_703_zellamsee": {
       "male": 25,
       "female": 25,
@@ -103,6 +168,162 @@
         "2027"
       ],
       "source_url": "https://www.ironman.com/races/im-world-championship-kona/qualifying-events-2027"
+    },
+    {
+      "event": "im_italy",
+      "year": "2026",
+      "method": "performance",
+      "male": null,
+      "female": null,
+      "combined": 55,
+      "total": 55,
+      "cycles": [
+        "2027"
+      ],
+      "source_url": "https://www.ironman.com/races/im-world-championship-kona/qualifying-events-2027"
+    },
+    {
+      "event": "im_chattanooga",
+      "year": "2026",
+      "method": "performance",
+      "male": null,
+      "female": null,
+      "combined": 55,
+      "total": 55,
+      "cycles": [
+        "2027"
+      ],
+      "source_url": "https://www.ironman.com/races/im-world-championship-kona/qualifying-events-2027"
+    },
+    {
+      "event": "im_california",
+      "year": "2026",
+      "method": "performance",
+      "male": null,
+      "female": null,
+      "combined": 55,
+      "total": 55,
+      "cycles": [
+        "2027"
+      ],
+      "source_url": "https://www.ironman.com/races/im-world-championship-kona/qualifying-events-2027"
+    },
+    {
+      "event": "im_703_valencia",
+      "year": "2026",
+      "method": "performance",
+      "male": 35,
+      "female": 35,
+      "combined": null,
+      "total": 70,
+      "cycles": [
+        "2026"
+      ],
+      "source_url": "https://www.ironman.com/races/im703-world-championship-2026/qualifying-events-2026"
+    },
+    {
+      "event": "im_703_jesolo",
+      "year": "2026",
+      "method": "performance",
+      "male": 30,
+      "female": 30,
+      "combined": null,
+      "total": 60,
+      "cycles": [
+        "2026"
+      ],
+      "source_url": "https://www.ironman.com/races/im703-world-championship-2026/qualifying-events-2026"
+    },
+    {
+      "event": "im_703_mallorca",
+      "year": "2026",
+      "method": "performance",
+      "male": 30,
+      "female": 30,
+      "combined": null,
+      "total": 60,
+      "cycles": [
+        "2026"
+      ],
+      "source_url": "https://www.ironman.com/races/im703-world-championship-2026/qualifying-events-2026"
+    },
+    {
+      "event": "im_703_kraichgau",
+      "year": "2026",
+      "method": "performance",
+      "male": 30,
+      "female": 30,
+      "combined": null,
+      "total": 60,
+      "cycles": [
+        "2026"
+      ],
+      "source_url": "https://www.ironman.com/races/im703-world-championship-2026/qualifying-events-2026"
+    },
+    {
+      "event": "im_703_krakow",
+      "year": "2026",
+      "method": "performance",
+      "male": 25,
+      "female": 25,
+      "combined": null,
+      "total": 50,
+      "cycles": [
+        "2027"
+      ],
+      "source_url": "https://www.ironman.com/races/im703-world-championship-2027/qualifying-events-2027"
+    },
+    {
+      "event": "im_703_tallinn",
+      "year": "2026",
+      "method": "performance",
+      "male": 25,
+      "female": 25,
+      "combined": null,
+      "total": 50,
+      "cycles": [
+        "2027"
+      ],
+      "source_url": "https://www.ironman.com/races/im703-world-championship-2027/qualifying-events-2027"
+    },
+    {
+      "event": "im_703_emiliaromagna",
+      "year": "2026",
+      "method": "performance",
+      "male": 30,
+      "female": 30,
+      "combined": null,
+      "total": 60,
+      "cycles": [
+        "2027"
+      ],
+      "source_url": "https://www.ironman.com/races/im703-world-championship-2027/qualifying-events-2027"
+    },
+    {
+      "event": "im_703_cascais",
+      "year": "2026",
+      "method": "performance",
+      "male": 25,
+      "female": 25,
+      "combined": null,
+      "total": 50,
+      "cycles": [
+        "2027"
+      ],
+      "source_url": "https://www.ironman.com/races/im703-world-championship-2027/qualifying-events-2027"
+    },
+    {
+      "event": "im_703_porec",
+      "year": "2026",
+      "method": "performance",
+      "male": 25,
+      "female": 25,
+      "combined": null,
+      "total": 50,
+      "cycles": [
+        "2027"
+      ],
+      "source_url": "https://www.ironman.com/races/im703-world-championship-2027/qualifying-events-2027"
     },
     {
       "event": "im_703_zellamsee",

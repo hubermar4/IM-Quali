@@ -128,8 +128,12 @@ class DashboardDataTests(unittest.TestCase):
             for year, entry in dataset["course_factors"].items():
                 label = f"{event_id} {year}"
                 for split in ("swim", "bike", "run", "overall"):
-                    self.assertTrue(0.8 < entry[split] < 1.25, f"{label} {split}")
-                self.assertGreaterEqual(entry["repeat_athletes"], 150, label)
+                    # Downstream river swims (California, Chattanooga) are about 30% faster.
+                    lower = 0.55 if split == "swim" else 0.8
+                    self.assertTrue(lower < entry[split] < 1.25, f"{label} {split}")
+                # US races and single-edition 70.3 races share few athletes with the other races.
+                minimum = 75 if dataset["group"] == "im" else 50
+                self.assertGreaterEqual(entry["repeat_athletes"], minimum, label)
         for split in ("t1", "t2"):
             values = [entry[split] for dataset in self.datasets.values()
                       for entry in dataset["course_factors"].values() if split in entry]
@@ -179,10 +183,8 @@ class DashboardDataTests(unittest.TestCase):
         for event_id, dataset in self.datasets.items():
             model = dataset["course_model"]
             self.assertTrue(0.97 < model["returning"]["overall"] < 1.01, event_id)
-            if dataset["group"] == "im":
+            if dataset["group"] == "im" or dataset["qualifying"]:
                 self.assertTrue(0.85 < model["course"]["overall"] < 1.15, event_id)
-            else:
-                self.assertIsNone(model["course"], event_id)
 
     def test_historical_standards_follow_the_qualifying_cycle(self):
         cycles = {
@@ -208,6 +210,47 @@ class DashboardDataTests(unittest.TestCase):
                     self.assertEqual(summary["matched_pool_starters"], plotted_matches)
                     winner_matches.append(match)
         self.assertTrue(winner_matches, "expected at least one matched automatic winner in current-rule re-ranking")
+
+    def test_half_distance_championship_trace_covers_only_its_cycle(self):
+        traces = self.datasets["im_kona"]["wc703_traces"]
+        self.assertEqual(set(traces), {"2026"})
+        trace = traces["2026"]
+        self.assertEqual(trace["venues"], {"Male": ["Nice"], "Female": ["Nice"]})
+        covered = {(race["event_id"], race["year"]) for race in trace["covered_races"]}
+        # 2026 70.3 races after the Nice championship belong to the 2027 cycle.
+        self.assertIn(("im_703_zellamsee", "2025"), covered)
+        self.assertIn(("im_703_valencia", "2026"), covered)
+        self.assertNotIn(("im_703_krakow", "2026"), covered)
+        self.assertNotIn(("im_703_zellamsee", "2026"), covered)
+        for objective, rows, cycle in (("historical", trace["summaries"]["all"], "2026"),
+                                       ("current", trace["counterfactual_summaries"], "2027")):
+            self.assertTrue(rows, objective)
+            for row in rows:
+                label = f"{objective} {row['event_id']} {row['year']} {row['gender']}"
+                self.assertEqual(row["slot_scope"], "gender", label)
+                self.assertEqual(row["kona_cycle"], "2026", label)
+                self.assertEqual(row["ranking_cycle"], cycle, label)
+                historical = next(
+                    target for target in self.datasets[row["event_id"]]["historical_qualification"]["targets"]
+                    if target["year"] == row["year"] and target["gender"] == row["gender"]
+                )
+                if objective == "historical":
+                    self.assertEqual(row["pool_slots"], historical["performance_slots"], label)
+        self.assertEqual(trace["counterfactual_standard_cycle"], "2027")
+
+    def test_new_race_years_use_their_qualifying_cycle(self):
+        expected = {
+            ("im_florida", "2025"): "2026", ("im_cozumel", "2025"): "2026", ("im_texas", "2026"): "2026",
+            ("im_california", "2026"): "2027", ("im_chattanooga", "2026"): "2027", ("im_italy", "2026"): "2027",
+            ("im_703_valencia", "2026"): "2026", ("im_703_kraichgau", "2026"): "2026",
+            ("im_703_krakow", "2026"): "2027", ("im_703_porec", "2026"): "2027",
+        }
+        for (event_id, year), cycle in expected.items():
+            rows = [row for row in self.datasets[event_id]["historical_qualification"]["targets"] if row["year"] == year]
+            self.assertTrue(rows, f"{event_id} {year}")
+            self.assertEqual({row["standard_cycle"] for row in rows}, {cycle}, f"{event_id} {year}")
+        self.assertFalse(self.datasets["im_703_nice_wc"]["qualifying"])
+        self.assertEqual(self.datasets["im_703_nice_wc"]["historical_qualification"]["targets"], [])
 
 
 if __name__ == "__main__":

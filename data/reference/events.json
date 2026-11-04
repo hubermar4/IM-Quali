@@ -1,6 +1,37 @@
 {
   "_comment": "Per-event registry keyed by the race_history folder name.",
   "events": {
+    "im_703_cascais": {
+      "display_name": "IRONMAN 70.3 Portugal-Cascais"
+    },
+    "im_703_emiliaromagna": {
+      "display_name": "IRONMAN 70.3 Italy Emilia-Romagna"
+    },
+    "im_703_jesolo": {
+      "display_name": "IRONMAN 70.3 Venice-Jesolo"
+    },
+    "im_703_kraichgau": {
+      "display_name": "IRONMAN 70.3 Kraichgau"
+    },
+    "im_703_krakow": {
+      "display_name": "IRONMAN 70.3 Krakow"
+    },
+    "im_703_mallorca": {
+      "display_name": "IRONMAN 70.3 Mallorca"
+    },
+    "im_703_nice_wc": {
+      "display_name": "IRONMAN 70.3 World Championship Nice",
+      "venue": "Nice"
+    },
+    "im_703_porec": {
+      "display_name": "IRONMAN 70.3 Porec"
+    },
+    "im_703_tallinn": {
+      "display_name": "IRONMAN 70.3 Tallinn"
+    },
+    "im_703_valencia": {
+      "display_name": "IRONMAN 70.3 Valencia"
+    },
     "im_austria": {
       "coachcox_name": "Ironman Austria",
       "gpx_file": "austria.gpx"
@@ -9,6 +40,18 @@
       "coachcox_name": "Ironman Barcelona",
       "display_name": "IRONMAN Calella-Barcelona",
       "gpx_file": "barcelona.gpx"
+    },
+    "im_california": {
+      "coachcox_name": "Ironman California"
+    },
+    "im_chattanooga": {
+      "coachcox_name": "Ironman Chattanooga"
+    },
+    "im_cozumel": {
+      "coachcox_name": "Ironman Cozumel"
+    },
+    "im_florida": {
+      "coachcox_name": "Ironman Florida"
     },
     "im_france": {
       "coachcox_name": "Ironman France",
@@ -56,6 +99,9 @@
       "display_name": "IRONMAN Tallinn",
       "gpx_file": "tallinn.gpx"
     },
+    "im_texas": {
+      "coachcox_name": "Ironman Texas"
+    },
     "im_thun": {
       "coachcox_name": "Ironman Switzerland",
       "display_name": "IRONMAN Switzerland Thun",
@@ -73,7 +119,8 @@
   },
   "non_qualifying_events": [
     "im_kona",
-    "im_nice_wc"
+    "im_nice_wc",
+    "im_703_nice_wc"
   ],
   "nice_championship_event": "im_nice_wc"
 }
