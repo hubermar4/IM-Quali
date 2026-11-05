@@ -213,9 +213,11 @@ class DashboardDataTests(unittest.TestCase):
 
     def test_half_distance_championship_trace_covers_only_its_cycle(self):
         traces = self.datasets["im_kona"]["wc703_traces"]
-        self.assertEqual(set(traces), {"2026"})
+        venues = {"2022": "St. George", "2023": "Lahti", "2024": "Taupo", "2025": "Marbella", "2026": "Nice"}
+        self.assertEqual(set(traces), set(venues))
+        for cycle, venue in venues.items():
+            self.assertEqual(traces[cycle]["venues"], {"Male": [venue], "Female": [venue]}, cycle)
         trace = traces["2026"]
-        self.assertEqual(trace["venues"], {"Male": ["Nice"], "Female": ["Nice"]})
         covered = {(race["event_id"], race["year"]) for race in trace["covered_races"]}
         # 2026 70.3 races after the Nice championship belong to the 2027 cycle.
         self.assertIn(("im_703_zellamsee", "2025"), covered)
@@ -237,6 +239,19 @@ class DashboardDataTests(unittest.TestCase):
                 if objective == "historical":
                     self.assertEqual(row["pool_slots"], historical["performance_slots"], label)
         self.assertEqual(trace["counterfactual_standard_cycle"], "2027")
+        # Age-group-allocation cycle: historical rows rank inside the age group, current rows in the gender pool.
+        legacy = traces["2025"]
+        self.assertIn(("im_703_zellamsee", "2024"), {(race["event_id"], race["year"]) for race in legacy["covered_races"]})
+        self.assertTrue(legacy["summaries"]["all"])
+        for row in legacy["summaries"]["all"]:
+            self.assertEqual(row["slot_scope"], "age group", row["event_id"])
+            target = next(t for t in self.datasets[row["event_id"]]["historical_qualification"]["targets"]
+                          if t["year"] == row["year"] and t["division"] == row["division"])
+            self.assertEqual(row["pool_slots"], target["slots"], f"{row['event_id']} {row['division']}")
+        self.assertTrue(all(row["slot_scope"] == "gender" for row in legacy["counterfactual_summaries"]))
+        # No published cycle mapping exists for these race-years, so no evidence is inferred.
+        self.assertEqual(traces["2022"]["covered_races"], [])
+        self.assertEqual(traces["2023"]["covered_races"], [])
 
     def test_new_race_years_use_their_qualifying_cycle(self):
         expected = {

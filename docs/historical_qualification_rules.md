@@ -215,7 +215,36 @@ Integer allocation:
   allocations are used and match the `Qualified` flags). No 2027 championship
   start list exists yet.
 
-## IRONMAN 70.3 (Zell am See)
+## IRONMAN 70.3
+
+### Cycle mapping and championships
+
+Race-year to cycle mapping and published slot totals come from the Coach Cox
+70.3 qualification pages (`data/cache/CoachCoxHalfQualificationPages/`,
+`coachcox_703_name` in `data/reference/events.json`), complemented by the
+official ironman.com 2026/2027 lists. Coach Cox lists the 2024-2027 cycles
+completely; its 2022 and 2023 cycle pages are nearly empty, so race-years of
+those cycles (Zell am See 2021/2022, Kraichgau 2022, Venice-Jesolo 2022/2023,
+Emilia-Romagna and Poznan 2022) have no established cycle and stay
+unavailable in historical mode. *Official* where listed. The supplied
+Kraichgau 2023 file is excluded (`data/excluded/`): 155 of 157 athletes also
+in the 2022 results appear in a younger age group, so it is an older edition.
+
+| Cycle | Championship | Rules | Data race-years with a known cycle |
+|---|---|---|---|
+| 2022 | St. George, USA (Oct 2022) | R | none |
+| 2023 | Lahti, Finland (Aug 2023) | R | none |
+| 2024 | Taupo, New Zealand (Dec 2024) | R | Emilia-Romagna 2023 (40), Poznan 2023 (30), Zell am See 2023 (40), Venice-Jesolo 2024 (45), Kraichgau 2024 (55) |
+| 2025 | Marbella, Spain (Nov 2025) | R | Belgrade 2024 (50), Emilia-Romagna 2024 (50), Poznan 2024 (40), Zell am See 2024 (50), Venice-Jesolo 2025 (50), Kraichgau 2025 (50) |
+| 2026 | Nice, France (Sep 2026) | P1 | Belgrade, Emilia-Romagna, Zell am See 2025 (35/35), Poznan 2025 (30/30), Valencia 2026 (35/35), Venice-Jesolo, Mallorca, Kraichgau 2026 (30/30) |
+| 2027 | Chattanooga, USA (2027) | P1 | Krakow, Tallinn, Poznan, Zell am See, Belgrade, Cascais, Porec 2026 (25/25), Emilia-Romagna 2026 (30/30) |
+
+In every listed race-year the `Qualified` flags fill the published total, so
+R-era race-years use the official allocation from the results. Each
+championship's men's and women's results are separate files in one folder
+per venue (`IM_703_<Venue>_WC`).
+
+### Zell am See flags
 
 The 70.3 World Championship has been run as two separate days for men and
 women since 2021 and always with separate men's and women's quotas. Rule

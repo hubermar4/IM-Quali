@@ -31,6 +31,7 @@ OUTPUT_FILE = DIST_DIR / "dashboard.html"
 DATA_FILE = DIST_DIR / "dashboard_data.js"
 INDEX_FILE = DIST_DIR / "index.html"
 COACHCOX_CACHE_DIR = CACHE_DIR / "CoachCoxQualificationPages"
+COACHCOX_HALF_CACHE_DIR = CACHE_DIR / "CoachCoxHalfQualificationPages"
 FULL_DISTANCE = {"swim": 3800, "bike": 180, "run": 42.2}
 HALF_DISTANCE = {"swim": 1900, "bike": 90, "run": 21.1}
 YEAR_PATTERN = re.compile(r"(20\d{2})")
@@ -60,6 +61,7 @@ OFFICIAL_SLOT_SOURCES = {
   for entry in _SLOTS["official_sources"]
 }
 COACHCOX_EVENT_NAMES = reference_data.coachcox_event_names()
+COACHCOX_HALF_EVENT_NAMES = reference_data.coachcox_half_event_names()
 EVENT_DISPLAY_NAMES = reference_data.event_display_names()
 GPX_EVENT_FILES = reference_data.gpx_event_files()
 LEGACY_RANK_OFFSETS = tuple(_CONSTANTS["legacy_rank_offsets"])
@@ -159,22 +161,32 @@ QUALIFICATION_MODULES = {
 }
 
 
+def coachcox_name_key(name):
+  # Coach Cox spells some 70.3 races both "Portugal - Cascais" and "Portugal-Cascais".
+  return re.sub(r"\s*-\s*", "-", name.strip()).lower()
+
+
 def load_historical_slot_sources():
   matches = {}
-  wanted_names = {name: event_id for event_id, name in COACHCOX_EVENT_NAMES.items()}
-  for cache_file in sorted(COACHCOX_CACHE_DIR.glob("qualification_*.html")):
-    cycle_match = YEAR_PATTERN.search(cache_file.stem)
-    if not cycle_match:
-      continue
-    cycle = cycle_match.group(1)
-    source_url = f"https://coachcox.co.uk/imstats/im/qualification/{cycle}/races/"
-    rows = parse_coachcox_races(
-      cache_file.read_text(encoding="utf-8"), source_url, cycle
-    )
-    for row in rows:
-      event_id = wanted_names.get(row["race_name"])
-      if event_id:
-        matches.setdefault((event_id, row["event_year"]), []).append(row)
+  pages = (
+    (COACHCOX_CACHE_DIR, "im", COACHCOX_EVENT_NAMES),
+    (COACHCOX_HALF_CACHE_DIR, "him", COACHCOX_HALF_EVENT_NAMES),
+  )
+  for cache_dir, series, event_names in pages:
+    wanted_names = {coachcox_name_key(name): event_id for event_id, name in event_names.items()}
+    for cache_file in sorted(cache_dir.glob("qualification_*.html")):
+      cycle_match = YEAR_PATTERN.search(cache_file.stem)
+      if not cycle_match:
+        continue
+      cycle = cycle_match.group(1)
+      source_url = f"https://coachcox.co.uk/imstats/{series}/qualification/{cycle}/races/"
+      rows = parse_coachcox_races(
+        cache_file.read_text(encoding="utf-8"), source_url, cycle
+      )
+      for row in rows:
+        event_id = wanted_names.get(coachcox_name_key(row["race_name"]))
+        if event_id:
+          matches.setdefault((event_id, row["event_year"]), []).append(row)
 
   def row_total(row):
     if row["male_qualifiers"] is not None or row["female_qualifiers"] is not None:
@@ -962,19 +974,22 @@ def current_pool_counterfactual_calendar(calendar, events, event_names, group="i
 
 
 def half_distance_calendar(cycle):
-  """70.3 qualifying race-years of one cycle from their official per-gender allocation."""
+  """70.3 qualifying race-years of one cycle with their published allocation."""
   rows = []
   for (event_id, year), source in sorted(HISTORICAL_SLOT_SOURCES.items()):
     event = EVENTS.get(event_id, {})
-    if event.get("group") != "703" or source.get("cycles") != [str(cycle)]:
+    if event.get("group") != "703" or source.get("cycles") != [str(cycle)] or source.get("other_cycles"):
       continue
-    if source.get("male") is None or source.get("female") is None:
+    if source.get("male") is not None and source.get("female") is not None:
+      male, female, total = source["male"], source["female"], source["male"] + source["female"]
+    elif source.get("method") == "legacy" and source.get("total"):
+      male, female, total = None, None, source["total"]
+    else:
       continue
     rows.append({
       "qualification_cycle": str(cycle), "race_name": event_id, "event_year": year,
       "race_date": "", "source_url": source.get("source_url") or "",
-      "male_qualifiers": source["male"], "female_qualifiers": source["female"],
-      "total_qualifiers": source["male"] + source["female"],
+      "male_qualifiers": male, "female_qualifiers": female, "total_qualifiers": total,
     })
   return rows
 

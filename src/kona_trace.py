@@ -174,14 +174,11 @@ def build_kona_trace(kona_frame, calendar, events, read_results, event_names, ye
         raw = read_results(event["years"][race_year])
         total_slots = race.get("total_qualifiers")
         gender_slots = (race.get("male_qualifiers"), race.get("female_qualifiers"))
-        if total_slots is None or (is_half and None in gender_slots):
+        legacy = ranking_cycle not in module.STANDARDS
+        if total_slots is None or (is_half and not legacy and None in gender_slots):
             missing.append({**info, "reason": "No cycle-specific slot allocation"})
             continue
         raw_rows = raw.to_dict("index")
-        legacy = ranking_cycle not in module.STANDARDS
-        if legacy and is_half:
-            missing.append({**info, "reason": "No cycle-compatible age-group allocation"})
-            continue
         cohorts = []
         if legacy:
             targets = (historical_targets or {}).get((event_id, race_year), [])

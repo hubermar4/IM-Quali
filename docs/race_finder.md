@@ -122,8 +122,9 @@ ranks use the current-rules pool, never the historical pool ranking. A match doe
 acceptance at the qualifying race; no match does not prove absence or decline.
 Automatic age-group winners are a separate route from the performance pool.
 70.3 championship starter matching uses the 70.3 World Championship start list
-of the same cycle (currently only Nice 2026 for the 2026 cycle; 70.3 race-years
-of other cycles show the evidence as unavailable). The shared year filter
+of the same cycle (St. George 2022, Lahti 2023, Taupo 2024, Marbella 2025,
+Nice 2026). Race-years without a published cycle mapping (the 2022 and 2023
+cycles) and 2027-cycle race-years show the evidence as unavailable. The shared year filter
 changes displayed comparisons, not the underlying course fit, DNF training or
 personal-result calibration.
 

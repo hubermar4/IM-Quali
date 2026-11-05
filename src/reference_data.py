@@ -23,6 +23,14 @@ def coachcox_event_names():
     }
 
 
+def coachcox_half_event_names():
+    return {
+        event_id: entry["coachcox_703_name"]
+        for event_id, entry in events()["events"].items()
+        if "coachcox_703_name" in entry
+    }
+
+
 def event_display_names():
     return {
         event_id: entry["display_name"]

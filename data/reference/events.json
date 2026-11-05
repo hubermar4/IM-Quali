@@ -1,36 +1,73 @@
 {
   "_comment": "Per-event registry keyed by the race_history folder name.",
   "events": {
+    "im_703_belgrade": {
+      "coachcox_703_name": "Ironman 70.3 Belgrade",
+      "display_name": "IRONMAN 70.3 Belgrade"
+    },
     "im_703_cascais": {
+      "coachcox_703_name": "Ironman 70.3 Portugal-Cascais",
       "display_name": "IRONMAN 70.3 Portugal-Cascais"
     },
     "im_703_emiliaromagna": {
+      "coachcox_703_name": "Ironman 70.3 Italy Emilia-Romagna",
       "display_name": "IRONMAN 70.3 Italy Emilia-Romagna"
     },
     "im_703_jesolo": {
+      "coachcox_703_name": "Ironman 70.3 Venice-Jesolo",
       "display_name": "IRONMAN 70.3 Venice-Jesolo"
     },
     "im_703_kraichgau": {
+      "coachcox_703_name": "Ironman 70.3 Kraichgau",
       "display_name": "IRONMAN 70.3 Kraichgau"
     },
     "im_703_krakow": {
+      "coachcox_703_name": "Ironman 70.3 Krakow",
       "display_name": "IRONMAN 70.3 Krakow"
     },
+    "im_703_lahti_wc": {
+      "display_name": "IRONMAN 70.3 World Championship Lahti",
+      "venue": "Lahti"
+    },
     "im_703_mallorca": {
+      "coachcox_703_name": "Ironman 70.3 Mallorca",
       "display_name": "IRONMAN 70.3 Mallorca"
+    },
+    "im_703_marbella_wc": {
+      "display_name": "IRONMAN 70.3 World Championship Marbella",
+      "venue": "Marbella"
     },
     "im_703_nice_wc": {
       "display_name": "IRONMAN 70.3 World Championship Nice",
       "venue": "Nice"
     },
     "im_703_porec": {
+      "coachcox_703_name": "Ironman 70.3 Porec",
       "display_name": "IRONMAN 70.3 Porec"
     },
+    "im_703_poznan": {
+      "coachcox_703_name": "Ironman 70.3 Poznan",
+      "display_name": "IRONMAN 70.3 Poznan"
+    },
+    "im_703_stgeorge_wc": {
+      "display_name": "IRONMAN 70.3 World Championship St. George",
+      "venue": "St. George"
+    },
     "im_703_tallinn": {
+      "coachcox_703_name": "Ironman 70.3 Tallinn",
       "display_name": "IRONMAN 70.3 Tallinn"
     },
+    "im_703_taupo_wc": {
+      "display_name": "IRONMAN 70.3 World Championship Taupo",
+      "venue": "Taupo"
+    },
     "im_703_valencia": {
+      "coachcox_703_name": "Ironman 70.3 Valencia",
       "display_name": "IRONMAN 70.3 Valencia"
+    },
+    "im_703_zellamsee": {
+      "coachcox_703_name": "Ironman 70.3 Zell am See-Kaprun",
+      "display_name": "IRONMAN 70.3 Zell am See-Kaprun"
     },
     "im_austria": {
       "coachcox_name": "Ironman Austria",
@@ -120,6 +157,10 @@
   "non_qualifying_events": [
     "im_kona",
     "im_nice_wc",
+    "im_703_stgeorge_wc",
+    "im_703_lahti_wc",
+    "im_703_taupo_wc",
+    "im_703_marbella_wc",
     "im_703_nice_wc"
   ],
   "nice_championship_event": "im_nice_wc"

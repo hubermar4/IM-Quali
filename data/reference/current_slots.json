@@ -91,6 +91,11 @@
     }
   },
   "703": {
+    "im_703_belgrade": {
+      "male": 25,
+      "female": 25,
+      "cycle": "2027"
+    },
     "im_703_cascais": {
       "male": 25,
       "female": 25,
@@ -122,6 +127,11 @@
       "cycle": "2026"
     },
     "im_703_porec": {
+      "male": 25,
+      "female": 25,
+      "cycle": "2027"
+    },
+    "im_703_poznan": {
       "male": 25,
       "female": 25,
       "cycle": "2027"
