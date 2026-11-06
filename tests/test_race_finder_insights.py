@@ -84,11 +84,20 @@ class BacktestTests(unittest.TestCase):
         self.assertAlmostEqual(backtest.phi(1.96), 0.975, places=3)
 
     def test_built_dataset_has_new_payloads(self):
-        data = ROOT / "dist" / "dashboard_data.js"
-        if not data.exists():
+        data_files = (
+            ROOT / "dist" / "dashboard_data_im.js",
+            ROOT / "dist" / "dashboard_data_703.js",
+        )
+        if not all(data_file.exists() for data_file in data_files):
             self.skipTest("dashboard not built")
-        text = data.read_text(encoding="utf-8")
-        kona = json.loads(text[text.index("=") + 1:].strip().rstrip(";"))["im_kona"]
+        datasets = {}
+        for data_file in data_files:
+            text = data_file.read_text(encoding="utf-8")
+            start = text.index("Object.assign(window.DASHBOARD_DATA || {}, ") + len(
+                "Object.assign(window.DASHBOARD_DATA || {}, "
+            )
+            datasets.update(json.loads(text[start:].strip().rstrip(");")))
+        kona = datasets["im_kona"]
         self.assertGreater(kona["rolldown_calibration"]["genders"]["female"]["factor"], kona["rolldown_calibration"]["genders"]["male"]["factor"])
         self.assertIn("A_calibrated", kona["backtest"]["reliability"])
         self.assertTrue(all(0 <= entry["rate"] < 1 for entry in kona["dnf_rates"].values()))

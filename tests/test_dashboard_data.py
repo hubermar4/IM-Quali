@@ -1,3 +1,4 @@
+import json
 import math
 import sys
 import unittest
@@ -18,6 +19,32 @@ class DashboardDataTests(unittest.TestCase):
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
             cls.datasets = build_dashboard.load_dashboard_data()
+
+    def test_dashboard_html_loads_both_data_files_before_app(self):
+        html = build_dashboard.build_html({})
+        ironman = html.index('<script src="dashboard_data_im.js"></script>')
+        ironman_703 = html.index('<script src="dashboard_data_703.js"></script>')
+        app = html.index("<script>\n")
+        self.assertLess(ironman, ironman_703)
+        self.assertLess(ironman_703, app)
+
+    def test_dashboard_payloads_are_split_by_distance_and_under_file_limit(self):
+        payloads = build_dashboard.build_data_payloads(self.datasets)
+        self.assertEqual(set(payloads), {"im", "703"})
+        merged = {}
+        for group, payload in payloads.items():
+            self.assertLess(
+                len(payload.encode("utf-8")),
+                build_dashboard.MAX_DATA_FILE_SIZE,
+            )
+            prefix = "Object.assign(window.DASHBOARD_DATA || {}, "
+            group_data = json.loads(
+                payload[payload.index(prefix) + len(prefix):].strip().rstrip(");")
+            )
+            self.assertTrue(group_data)
+            self.assertTrue(all(dataset["group"] == group for dataset in group_data.values()))
+            merged.update(group_data)
+        self.assertEqual(merged, self.datasets)
 
     def test_current_rules_conserve_all_slots(self):
         for event_id, dataset in self.datasets.items():

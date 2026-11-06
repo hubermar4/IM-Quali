@@ -28,8 +28,13 @@ from split_time_analysis import (
 
 
 OUTPUT_FILE = DIST_DIR / "dashboard.html"
-DATA_FILE = DIST_DIR / "dashboard_data.js"
+DATA_FILES = {
+    "im": DIST_DIR / "dashboard_data_im.js",
+    "703": DIST_DIR / "dashboard_data_703.js",
+}
+LEGACY_DATA_FILE = DIST_DIR / "dashboard_data.js"
 INDEX_FILE = DIST_DIR / "index.html"
+MAX_DATA_FILE_SIZE = 95_000_000
 COACHCOX_CACHE_DIR = CACHE_DIR / "CoachCoxQualificationPages"
 COACHCOX_HALF_CACHE_DIR = CACHE_DIR / "CoachCoxHalfQualificationPages"
 FULL_DISTANCE = {"swim": 3800, "bike": 180, "run": 42.2}
@@ -1159,6 +1164,34 @@ def build_html(datasets):
     return template.replace("@@STYLE@@\n", style).replace("@@SCRIPT@@\n", script)
 
 
+def build_data_payloads(datasets):
+    grouped = {"im": {}, "703": {}}
+    for event_id, dataset in datasets.items():
+        group = dataset["group"]
+        if group not in grouped:
+            raise ValueError(f"Unsupported dashboard data group: {group}")
+        grouped[group][event_id] = dataset
+
+    payloads = {}
+    for group, group_datasets in grouped.items():
+        data_json = json.dumps(
+            group_datasets, ensure_ascii=False, separators=(",", ":")
+        ).replace("</", "<\\/")
+        payload = (
+            "window.DASHBOARD_DATA = Object.assign("
+            "window.DASHBOARD_DATA || {}, "
+            f"{data_json});\n"
+        )
+        size = len(payload.encode("utf-8"))
+        if size >= MAX_DATA_FILE_SIZE:
+            raise ValueError(
+                f"Dashboard {group} data is {size:,} bytes; "
+                f"the maximum per file is {MAX_DATA_FILE_SIZE:,} bytes"
+            )
+        payloads[group] = payload
+    return payloads
+
+
 def build_index_html():
     return """<!doctype html>
 <html lang="en">
@@ -1178,10 +1211,9 @@ def build_index_html():
 def main():
     ensure_output_directories()
     datasets = load_dashboard_data()
-    data_json = json.dumps(datasets, ensure_ascii=False).replace("</", "<\\/")
-    DATA_FILE.write_text(
-        f"window.DASHBOARD_DATA = {data_json};\n", encoding="utf-8"
-    )
+    for group, payload in build_data_payloads(datasets).items():
+        DATA_FILES[group].write_text(payload, encoding="utf-8")
+    LEGACY_DATA_FILE.unlink(missing_ok=True)
     OUTPUT_FILE.write_text(build_html(datasets), encoding="utf-8")
     INDEX_FILE.write_text(build_index_html(), encoding="utf-8")
     counts = ", ".join(
@@ -1190,7 +1222,8 @@ def main():
     )
     print(f"Embedded finishers ({counts}).")
     print(f"Saved dashboard to {OUTPUT_FILE.resolve()}")
-    print(f"Saved dashboard data to {DATA_FILE.resolve()}")
+    for data_file in DATA_FILES.values():
+        print(f"Saved dashboard data to {data_file.resolve()}")
     print(f"Saved Pages entry point to {INDEX_FILE.resolve()}")
 
 

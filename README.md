@@ -27,10 +27,12 @@ py -3 -m pip install -r requirements.txt
 py -3 build.py --with-tests
 ```
 
-The primary output is `dist/dashboard.html`. Its large dataset is stored in
-`dist/dashboard_data.js`, keeping athlete data out of the HTML while preserving
-direct `file://` opening. Keep both files together. The build also creates
-`dist/index.html`, which redirects to the dashboard for static-site hosts.
+The primary output is `dist/dashboard.html`. Its datasets are stored separately
+in `dist/dashboard_data_im.js` and `dist/dashboard_data_703.js`, keeping athlete
+data out of the HTML and each generated file below GitHub's file-size limit while
+preserving direct `file://` opening. Keep all three files together. The build
+also creates `dist/index.html`, which redirects to the dashboard for static-site
+hosts.
 
 ## GitHub Pages
 
