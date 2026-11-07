@@ -1,4 +1,24 @@
-    const DATASETS = window.DASHBOARD_DATA;
+    // Mirrors expand_dataset() in build_dashboard.py: rebuild keyed finisher
+    // records and resolve the default Kona trace reference.
+    function expandDashboardData(data) {
+      for (const entry of Object.values(data || {})) {
+        const records = entry.records;
+        if (records && !Array.isArray(records) && Array.isArray(records.columns)) {
+          const columns = records.columns;
+          entry.records = records.rows.map(row => {
+            const record = {};
+            columns.forEach((column, index) => { record[column] = row[index]; });
+            return record;
+          });
+        }
+        if (entry.kona_trace_ref !== undefined) {
+          entry.kona_trace = entry.kona_traces?.[entry.kona_trace_ref];
+          delete entry.kona_trace_ref;
+        }
+      }
+      return data;
+    }
+    const DATASETS = expandDashboardData(window.DASHBOARD_DATA);
     const splits = [
       ["Swim", "swim"], ["T1", "t1"], ["Bike", "bike"], ["T2", "t2"], ["Run", "run"]
     ];

@@ -141,7 +141,7 @@ def main() -> None:
     report = build_report(
         paths, Rider(), arguments.sample_distance, arguments.smoothing_window
     )
-    arguments.output.write_text(report, encoding="utf-8")
+    arguments.output.write_text(report, encoding="utf-8", newline="\n")
     print(f"Saved {len(paths)} tracks to {arguments.output.resolve()}")
 
 

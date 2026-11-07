@@ -142,5 +142,25 @@ class OfficialStandardTests(unittest.TestCase):
             self.assertGreater(compared, 1000, relative_path)
 
 
+
+class SharedHelperTests(unittest.TestCase):
+    def test_both_distances_share_one_time_parser(self):
+        from datetime import time, timedelta
+
+        self.assertIs(qualification_full.parse_time, qualification_703.parse_time)
+        expected = timedelta(hours=9, minutes=5, seconds=7)
+        for value in ("09:05:07", " 9:05:07 ", time(9, 5, 7), pd.Timedelta(expected), expected,
+                      pd.Timestamp("2025-06-29 09:05:07"), (9 * 3600 + 5 * 60 + 7) / 86400):
+            self.assertEqual(qualification_full.parse_time(value), expected, repr(value))
+        for value in (None, float("nan"), "", "DNF"):
+            self.assertIsNone(qualification_full.parse_time(value), repr(value))
+
+    def test_cutoff_rank_outside_pool_is_unavailable(self):
+        pool = pd.DataFrame({"age_graded": [1, 2, 3]})
+        self.assertEqual(qualification_full.get_cutoff(pool, 3)["age_graded"], 3)
+        self.assertIsNone(qualification_full.get_cutoff(pool, 3, extra=1))
+        self.assertIsNone(qualification_full.get_cutoff(pool, 0))
+
+
 if __name__ == "__main__":
     unittest.main()

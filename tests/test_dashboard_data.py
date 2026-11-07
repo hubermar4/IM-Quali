@@ -43,8 +43,24 @@ class DashboardDataTests(unittest.TestCase):
             )
             self.assertTrue(group_data)
             self.assertTrue(all(dataset["group"] == group for dataset in group_data.values()))
-            merged.update(group_data)
+            merged.update({
+                event_id: build_dashboard.expand_dataset(dataset)
+                for event_id, dataset in group_data.items()
+            })
         self.assertEqual(merged, self.datasets)
+
+    def test_compact_payload_stores_records_as_rows_and_references_default_trace(self):
+        payloads = build_dashboard.build_data_payloads(self.datasets)
+        prefix = "Object.assign(window.DASHBOARD_DATA || {}, "
+        payload = payloads["im"]
+        group_data = json.loads(payload[payload.index(prefix) + len(prefix):].strip().rstrip(");"))
+        for dataset in group_data.values():
+            self.assertEqual(dataset["records"]["columns"], list(build_dashboard.RECORD_COLUMNS))
+            self.assertTrue(all(len(row) == len(build_dashboard.RECORD_COLUMNS) for row in dataset["records"]["rows"]))
+        kona = group_data["im_kona"]
+        self.assertNotIn("kona_trace", kona)
+        self.assertEqual(kona["kona_trace_ref"], max(kona["kona_traces"], key=int))
+        self.assertEqual(kona["kona_trace_cycles"][-1]["year"], kona["kona_trace_ref"])
 
     def test_current_rules_conserve_all_slots(self):
         for event_id, dataset in self.datasets.items():
@@ -296,4 +312,4 @@ class DashboardDataTests(unittest.TestCase):
 
 
 if __name__ == "__main__":
-    unittest.main()
+    unittest.main()

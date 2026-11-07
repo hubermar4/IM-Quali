@@ -734,7 +734,27 @@
   <script src="dashboard_data_im.js"></script>
   <script src="dashboard_data_703.js"></script>
   <script>
-    const DATASETS = window.DASHBOARD_DATA;
+    // Mirrors expand_dataset() in build_dashboard.py: rebuild keyed finisher
+    // records and resolve the default Kona trace reference.
+    function expandDashboardData(data) {
+      for (const entry of Object.values(data || {})) {
+        const records = entry.records;
+        if (records && !Array.isArray(records) && Array.isArray(records.columns)) {
+          const columns = records.columns;
+          entry.records = records.rows.map(row => {
+            const record = {};
+            columns.forEach((column, index) => { record[column] = row[index]; });
+            return record;
+          });
+        }
+        if (entry.kona_trace_ref !== undefined) {
+          entry.kona_trace = entry.kona_traces?.[entry.kona_trace_ref];
+          delete entry.kona_trace_ref;
+        }
+      }
+      return data;
+    }
+    const DATASETS = expandDashboardData(window.DASHBOARD_DATA);
     const splits = [
       ["Swim", "swim"], ["T1", "t1"], ["Bike", "bike"], ["T2", "t2"], ["Run", "run"]
     ];
@@ -4026,6 +4046,7 @@ function updateDashboardScope() {
   document.getElementById("eventSubtitle").textContent = perRace
     ? dataset().subtitle
     : `${dashboardWorkspaces[activeWorkspace].label} / ${dashboardViewLabels[activeTab]}`;
+  writeDashboardHash();
 }
 
 function syncDashboardContext(key, value) {
@@ -5006,6 +5027,106 @@ function decorateDashboard() {
   });
 }
 
+// Shareable links: the URL hash records the view and the shared selections, so
+// a copied link reopens the same analysis. Unknown or invalid values are ignored.
+const dashboardHashKeys = ["view", "race", "distance", "gender", "ag", "rules", "cutoff", "factor", "fallback"];
+let dashboardHashReady = false;
+
+function parseDashboardHash(hash, allowed) {
+  const params = new URLSearchParams(String(hash || "").replace(/^#/, ""));
+  const state = {};
+  const pick = (key, values) => {
+    const value = params.get(key);
+    if (value !== null && values.includes(value)) state[key] = value;
+  };
+  pick("view", allowed.views);
+  pick("race", allowed.races);
+  pick("distance", ["im", "703"]);
+  pick("gender", ["Male", "Female"]);
+  pick("ag", allowed.ageGroups);
+  pick("rules", ["current", "historical"]);
+  pick("cutoff", allowed.cutoffs);
+  const factor = params.get("factor");
+  if (factor !== null && factor.trim() !== "" && Number.isFinite(Number(factor)) && Number(factor) >= 0) state.factor = Number(factor);
+  if (params.get("fallback") === "1" || params.get("fallback") === "0") state.fallback = params.get("fallback") === "1";
+  if (state.race && allowed.raceGroups?.[state.race]) state.distance = allowed.raceGroups[state.race];
+  return state;
+}
+
+function formatDashboardHash(state) {
+  const params = new URLSearchParams();
+  for (const key of dashboardHashKeys) {
+    const value = state[key];
+    if (value === undefined || value === null || value === "") continue;
+    params.set(key, typeof value === "boolean" ? (value ? "1" : "0") : String(value));
+  }
+  return `#${params.toString()}`;
+}
+
+function dashboardHashOptions() {
+  return {
+    views: Object.values(dashboardWorkspaces).flatMap(workspace => workspace.views),
+    races: Object.keys(DATASETS),
+    raceGroups: Object.fromEntries(Object.entries(DATASETS).map(([id, entry]) => [id, entry.group])),
+    ageGroups: [...document.getElementById("contextAgeGroup").options].map(option => option.value),
+    cutoffs: [...document.getElementById("contextCutoff").options].map(option => option.value),
+  };
+}
+
+function currentDashboardHash() {
+  return formatDashboardHash({
+    view: activeTab, race: eventSelect.value, distance: dashboardContext.distance,
+    gender: dashboardContext.gender, ag: dashboardContext.ageGroup, rules: qualificationSystem,
+    cutoff: qualificationAssumptions.mode, factor: qualificationAssumptions.rollDownFactor,
+    fallback: qualificationAssumptions.fallback,
+  });
+}
+
+function writeDashboardHash() {
+  if (!dashboardHashReady) return;
+  const hash = currentDashboardHash();
+  if (hash === location.hash) return;
+  try { history.replaceState(null, "", hash); } catch { /* file:// or sandboxed frames may refuse; links still work */ }
+}
+
+function applyDashboardHash(hash) {
+  const state = parseDashboardHash(hash, dashboardHashOptions());
+  if (!Object.keys(state).length) return false;
+  dashboardHashReady = false;
+  try {
+    if (state.race) eventSelect.value = state.race;
+    if (state.gender) dashboardContext.gender = state.gender;
+    if (state.ag) dashboardContext.ageGroup = state.ag;
+    if (state.rules) document.querySelector(`input[name="contextRules"][value="${state.rules}"]`).checked = true;
+    if (state.cutoff) document.getElementById("contextCutoff").value = state.cutoff;
+    if (state.fallback !== undefined) document.getElementById("contextFallback").checked = state.fallback;
+    if (state.factor !== undefined) qualificationAssumptions.rollDownFactor = state.factor;
+    updateRollDownFactorControl();
+    syncDashboardContext("distance", state.distance || dataset().group);
+    syncQualificationAssumptions();
+    if (state.view) activateDashboardView(state.view);
+  } finally {
+    dashboardHashReady = true;
+  }
+  writeDashboardHash();
+  return true;
+}
+
+async function copyDashboardLink() {
+  const status = document.getElementById("copyLinkStatus");
+  dashboardHashReady = true;
+  writeDashboardHash();
+  const url = location.href.split("#")[0] + currentDashboardHash();
+  try {
+    await navigator.clipboard.writeText(url);
+    status.textContent = "Link copied";
+  } catch {
+    window.prompt("Copy this link to share the current view:", url);
+    status.textContent = "";
+  }
+  setTimeout(() => { status.textContent = ""; }, 2500);
+}
+
 function initializeDashboardUI() {
   const style = document.createElement("style");
   style.textContent = `
@@ -5087,7 +5208,8 @@ function initializeDashboardUI() {
       <button type="button" class="context-action" data-years-action="all">All</button>
       <button type="button" class="context-action" data-years-action="none">None</button>
       <button type="button" class="context-action" data-years-action="reset">Reset</button>
-      <div id="contextYears" class="context-years" style="margin:0"></div></div><p class="note" id="contextScope"></p></div>
+      <div id="contextYears" class="context-years" style="margin:0"></div>
+      <button type="button" class="context-action" id="copyDashboardLink" title="Copy a link that reopens this view with the current selections">Copy link</button><span id="copyLinkStatus" class="note" role="status" aria-live="polite" style="margin:0"></span></div><p class="note" id="contextScope"></p></div>
     <nav id="viewTabs" class="tabs view-tabs" role="tablist" aria-label="Workspace views"></nav>`;
   document.querySelector(".legacy-tabs").before(nav);
   const eventHome = document.createElement("div");
@@ -5327,6 +5449,11 @@ function initializeDashboardUI() {
   renderWorkspaceNavigation();
   renderContextYears();
   decorateDashboard();
+  document.getElementById("copyDashboardLink").addEventListener("click", copyDashboardLink);
+  window.addEventListener("hashchange", () => {
+    if (location.hash !== currentDashboardHash()) applyDashboardHash(location.hash);
+  });
+  if (!applyDashboardHash(location.hash)) dashboardHashReady = true;
 }
     selectEvent(true);
     initializeKonaTrace();

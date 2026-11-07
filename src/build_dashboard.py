@@ -70,6 +70,8 @@ COACHCOX_HALF_EVENT_NAMES = reference_data.coachcox_half_event_names()
 EVENT_DISPLAY_NAMES = reference_data.event_display_names()
 GPX_EVENT_FILES = reference_data.gpx_event_files()
 LEGACY_RANK_OFFSETS = tuple(_CONSTANTS["legacy_rank_offsets"])
+# First championship cycle offered in the Kona start-list cycle selector.
+FIRST_KONA_TRACE_CYCLE = 2017
 
 
 def finishers_only(frame):
@@ -608,8 +610,7 @@ def load_event_data(event):
         gender_column = "Gender" if "Gender" in frame.columns else "gender"
         if gender_column not in frame.columns:
             continue
-        if "Finish" in frame.columns:
-            frame = frame.loc[frame["Finish"].eq("FIN")]
+        frame = finishers_only(frame)
         selected_columns = [*columns, gender_column]
         frame = frame[selected_columns].copy()
         duration_columns = ["Overall Time", *SPLIT_COLUMNS.values()]
@@ -1125,10 +1126,11 @@ def load_dashboard_data():
     add_counterfactual(traces[cycle], counterfactual_trace)
   if "im_kona" in datasets:
     datasets["im_kona"]["kona_traces"] = traces
-    datasets["im_kona"]["kona_trace"] = traces.get("2026")
+    latest_cycle = max(traces, key=int) if traces else None
+    datasets["im_kona"]["kona_trace"] = traces.get(latest_cycle)
     datasets["im_kona"]["kona_trace_cycles"] = [
       {"year": str(cycle), "available": str(cycle) in traces}
-      for cycle in range(2017, 2027)
+      for cycle in range(FIRST_KONA_TRACE_CYCLE, int(latest_cycle or FIRST_KONA_TRACE_CYCLE) + 1)
     ]
     datasets["im_kona"]["wc703_traces"] = build_half_distance_traces(historical_targets)
   factors, models = load_course_factors(datasets)
@@ -1164,13 +1166,55 @@ def build_html(datasets):
     return template.replace("@@STYLE@@\n", style).replace("@@SCRIPT@@\n", script)
 
 
+RECORD_COLUMNS = (
+    "year", "bib", "name", "country", "gender", "division",
+    "overall", "swim", "t1", "bike", "t2", "run",
+)
+
+
+def compact_dataset(dataset):
+    """Serialisation form of one dataset; `expandDashboardData` in dashboard_app.js reverses it.
+
+    Finisher records are stored column-ordered rows instead of keyed objects,
+    and the default Kona trace is a reference into `kona_traces` rather than a
+    second copy. Together this roughly halves the payload size.
+    """
+    compact = dict(dataset)
+    records = compact.get("records")
+    if isinstance(records, list):
+        compact["records"] = {
+            "columns": list(RECORD_COLUMNS),
+            "rows": [[record[column] for column in RECORD_COLUMNS] for record in records],
+        }
+    traces = compact.get("kona_traces") or {}
+    default_trace = compact.get("kona_trace")
+    if default_trace is not None:
+        reference = next((cycle for cycle, trace in traces.items() if trace is default_trace), None)
+        if reference is not None:
+            del compact["kona_trace"]
+            compact["kona_trace_ref"] = reference
+    return compact
+
+
+def expand_dataset(compact):
+    """Inverse of `compact_dataset` (mirrors the browser-side expansion)."""
+    dataset = dict(compact)
+    records = dataset.get("records")
+    if isinstance(records, dict) and "columns" in records:
+        columns = records["columns"]
+        dataset["records"] = [dict(zip(columns, row)) for row in records["rows"]]
+    if "kona_trace_ref" in dataset:
+        dataset["kona_trace"] = dataset["kona_traces"][dataset.pop("kona_trace_ref")]
+    return dataset
+
+
 def build_data_payloads(datasets):
     grouped = {"im": {}, "703": {}}
     for event_id, dataset in datasets.items():
         group = dataset["group"]
         if group not in grouped:
             raise ValueError(f"Unsupported dashboard data group: {group}")
-        grouped[group][event_id] = dataset
+        grouped[group][event_id] = compact_dataset(dataset)
 
     payloads = {}
     for group, group_datasets in grouped.items():
@@ -1212,10 +1256,10 @@ def main():
     ensure_output_directories()
     datasets = load_dashboard_data()
     for group, payload in build_data_payloads(datasets).items():
-        DATA_FILES[group].write_text(payload, encoding="utf-8")
+        DATA_FILES[group].write_text(payload, encoding="utf-8", newline="\n")
     LEGACY_DATA_FILE.unlink(missing_ok=True)
-    OUTPUT_FILE.write_text(build_html(datasets), encoding="utf-8")
-    INDEX_FILE.write_text(build_index_html(), encoding="utf-8")
+    OUTPUT_FILE.write_text(build_html(datasets), encoding="utf-8", newline="\n")
+    INDEX_FILE.write_text(build_index_html(), encoding="utf-8", newline="\n")
     counts = ", ".join(
         f"{event['name']}: {len(event['records'])}"
         for event in datasets.values()
@@ -1228,4 +1272,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    main()

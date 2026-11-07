@@ -1,3 +1,4 @@
+import json
 import re
 import shutil
 import subprocess
@@ -1926,6 +1927,67 @@ assert.match(svg.innerHTML, /data-year="2024"/);
         result = subprocess.run(["node"], input="\n".join(statements),
                                 text=True, encoding="utf-8", capture_output=True)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+
+
+class DashboardShareableStateTests(unittest.TestCase):
+    """Payload expansion and URL-hash state are browser-only; test the pure helpers in Node."""
+
+    SRC = Path(__file__).resolve().parents[1] / "src"
+
+    def run_node(self, script):
+        result = subprocess.run(["node"], input=script, text=True, encoding="utf-8", capture_output=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_copy_link_control_is_present(self):
+        html = build_dashboard.build_html({})
+        self.assertIn('id="copyDashboardLink"', html)
+        self.assertIn('id="copyLinkStatus"', html)
+        self.assertIn("applyDashboardHash(location.hash)", html)
+
+    @unittest.skipUnless(shutil.which("node"), "Node.js is required for dashboard UI tests")
+    def test_browser_expansion_matches_python_compaction(self):
+        source = (self.SRC / "dashboard_app.js").read_text(encoding="utf-8")
+        helper = source[source.index("    function expandDashboardData("):source.index("    const DATASETS = ")]
+        trace = {"year": "2026", "summaries": []}
+        record = {column: index for index, column in enumerate(build_dashboard.RECORD_COLUMNS)}
+        dataset = {"group": "im", "records": [record], "kona_traces": {"2025": {"year": "2025"}, "2026": trace},
+                   "kona_trace": trace}
+        compact = build_dashboard.compact_dataset(dataset)
+        self.assertNotIn("kona_trace", compact)
+        self.assertEqual(build_dashboard.expand_dataset(compact), dataset)
+        legacy = {"group": "703", "records": [record]}
+        self.assertEqual(build_dashboard.expand_dataset(build_dashboard.compact_dataset(legacy)), legacy)
+        self.run_node(
+            'const assert = require("node:assert/strict");\n' + helper
+            + f"const compact = {json.dumps({'race': compact})};\n"
+            + f"const expected = {json.dumps({'race': dataset})};\n"
+            + "assert.deepEqual(expandDashboardData(compact), expected);\n"
+            # Old payloads (keyed records, inline trace) still load unchanged.
+            + "assert.deepEqual(expandDashboardData(JSON.parse(JSON.stringify(expected))), expected);\n"
+        )
+
+    @unittest.skipUnless(shutil.which("node"), "Node.js is required for dashboard UI tests")
+    def test_dashboard_hash_round_trips_and_rejects_invalid_values(self):
+        source = (self.SRC / "dashboard_ui.js").read_text(encoding="utf-8")
+        helpers = source[source.index("const dashboardHashKeys"):source.index("function dashboardHashOptions(")]
+        self.run_node(
+            'const assert = require("node:assert/strict");\n' + helpers + r"""
+const allowed = {views:["easiest","qualification"], races:["im_austria","im_703_kraichgau"],
+  raceGroups:{im_austria:"im", im_703_kraichgau:"703"}, ageGroups:["30-34","40-44"], cutoffs:["strict","calibrated"]};
+const state = {view:"easiest", race:"im_austria", distance:"im", gender:"Female", ag:"40-44",
+  rules:"historical", cutoff:"strict", factor:1.5, fallback:true};
+const hash = formatDashboardHash(state);
+assert.equal(hash, "#view=easiest&race=im_austria&distance=im&gender=Female&ag=40-44&rules=historical&cutoff=strict&factor=1.5&fallback=1");
+assert.deepEqual(parseDashboardHash(hash, allowed), state);
+assert.deepEqual(parseDashboardHash("", allowed), {});
+assert.deepEqual(parseDashboardHash("#view=nope&race=x&gender=Other&ag=99&rules=x&cutoff=x&factor=-1&fallback=yes", allowed), {});
+assert.deepEqual(parseDashboardHash("#factor=", allowed), {});
+// A race fixes the distance even when the link says otherwise.
+assert.equal(parseDashboardHash("#race=im_703_kraichgau&distance=im", allowed).distance, "703");
+assert.equal(parseDashboardHash("#fallback=0", allowed).fallback, false);
+"""
+        )
 
 
 if __name__ == "__main__":
