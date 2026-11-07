@@ -1160,8 +1160,10 @@ def build_html(datasets):
     source = Path(__file__).parent
     template = (source / "dashboard_template.html").read_text(encoding="utf-8")
     style = (source / "dashboard.css").read_text(encoding="utf-8")
-    script = (source / "dashboard_app.js").read_text(encoding="utf-8").replace(
-        "@@DASHBOARD_UI@@", (source / "dashboard_ui.js").read_text(encoding="utf-8")
+    script = (
+        (source / "dashboard_app.js").read_text(encoding="utf-8")
+        .replace("@@DASHBOARD_EXPLORER@@", (source / "dashboard_explorer.js").read_text(encoding="utf-8"))
+        .replace("@@DASHBOARD_UI@@", (source / "dashboard_ui.js").read_text(encoding="utf-8"))
     )
     return template.replace("@@STYLE@@\n", style).replace("@@SCRIPT@@\n", script)
 

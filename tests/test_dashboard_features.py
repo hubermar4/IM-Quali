@@ -1990,5 +1990,72 @@ assert.equal(parseDashboardHash("#fallback=0", allowed).fallback, false);
         )
 
 
+
+class RaceExplorerTests(unittest.TestCase):
+    """Race Explorer statistics are descriptive (all athletes) and belong to neither objective."""
+
+    SRC = Path(__file__).resolve().parents[1] / "src"
+
+    def run_node(self, script):
+        result = subprocess.run(["node"], input=script, text=True, encoding="utf-8", capture_output=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_explorer_is_inlined_with_overview_first(self):
+        html = build_dashboard.build_html({})
+        self.assertNotIn("@@DASHBOARD_EXPLORER@@", html)
+        self.assertIn("function initializeExplorer()", html)
+        self.assertIn('explorer: {label: "Race Explorer", views: ["overview", "splits", "overall", "statistics"]}', html)
+        self.assertIn('id="finishersTable"', html)
+        for key in ("year", "name", "division", "place", "overall", "swim", "t1", "bike", "t2", "run"):
+            self.assertIn(f'<th data-sort="{key}" aria-sort="none">', html)
+
+    @unittest.skipUnless(shutil.which("node"), "Node.js is required for dashboard UI tests")
+    def test_ranks_percentiles_sorting_and_filters(self):
+        source = (self.SRC / "dashboard_explorer.js").read_text(encoding="utf-8")
+        helpers = source[:source.index("    // ---- Athletes & Splits table ----")]
+        self.run_node('const assert = require("node:assert/strict");\n' + helpers + r"""
+const row = (name, year, division, gender, overall, swim, country = "AUT") =>
+  ({name, year, division, gender, overall, swim, t1: 1, bike: 1, t2: 1, run: 1, country, bib: name});
+const a = row("A", "2025", "M30-34", "Male", 100, 30), b = row("B", "2025", "M30-34", "Male", 90, 40);
+const c = row("C", "2025", "F30-34", "Female", 95, 20, "GER"), d = row("D", "2024", "M30-34", "Male", 80, 50);
+const records = [a, b, c, d];
+const ranks = explorerRanks(records);
+assert.deepEqual(ranks.get(b), {place: 1, field: 3, divisionPlace: 1, divisionField: 2});
+assert.deepEqual(ranks.get(a), {place: 3, field: 3, divisionPlace: 2, divisionField: 2});
+assert.deepEqual(ranks.get(d), {place: 1, field: 1, divisionPlace: 1, divisionField: 1});
+assert.equal(explorerRanks(records), ranks);
+// Share of the field strictly slower; ties are not counted as beaten.
+const swims = explorerField(records, "2025", null, "swim");
+assert.deepEqual(swims, [20, 30, 40]);
+assert.equal(explorerFasterThan(swims, 20), 2 / 3);
+assert.equal(explorerFasterThan(swims, 40), 0);
+assert.equal(explorerFasterThan([], 40), null);
+assert.deepEqual(explorerField(records, "2025", "M30-34", "swim"), [30, 40]);
+assert.equal(explorerMedian([3, 1, 2]), 2);
+assert.equal(explorerMedian([4, 1, 2, 3]), 2.5);
+assert.equal(explorerMedian([]), null);
+explorerSort = {key: "swim", direction: -1};
+assert.deepEqual([...records].sort(explorerCompare).map(r => r.name), ["D", "B", "A", "C"]);
+explorerSort = {key: "overall", direction: 1};
+assert.deepEqual([...records].sort(explorerCompare).map(r => r.name), ["D", "B", "C", "A"]);
+explorerFilters.gender = "Female";
+assert.deepEqual(records.filter(explorerMatches).map(r => r.name), ["C"]);
+explorerFilters.gender = ""; explorerFilters.division = "M30-34"; explorerFilters.country = "AUT";
+assert.deepEqual(records.filter(explorerMatches).map(r => r.name), ["A", "B", "D"]);
+""")
+
+    @unittest.skipUnless(shutil.which("node"), "Node.js is required for dashboard UI tests")
+    def test_share_link_carries_explorer_filters(self):
+        source = (self.SRC / "dashboard_ui.js").read_text(encoding="utf-8")
+        helpers = source[source.index("const dashboardHashKeys"):source.index("function dashboardHashOptions(")]
+        self.run_node('const assert = require("node:assert/strict");\n' + helpers + r"""
+const allowed = {views:["splits"], races:["im_austria"], raceGroups:{im_austria:"im"}, ageGroups:[], cutoffs:[]};
+const state = {view:"splits", race:"im_austria", distance:"im", sex:"Female", div:"F30-34", ctry:"Germany",
+  q:"Lea", from:"09:00:00", to:"11:30:00"};
+assert.deepEqual(parseDashboardHash(formatDashboardHash(state), allowed), state);
+assert.deepEqual(parseDashboardHash("#sex=x&from=9am&to=25:99:00&div=" + "x".repeat(81), allowed), {});
+""")
+
+
 if __name__ == "__main__":
     unittest.main()

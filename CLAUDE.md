@@ -31,8 +31,11 @@ those tests are skipped when `node` is missing. Python 3.12+.
   matched-slot estimators.
 - `src/course_difficulty.py`, `src/gpx_course_model.py` – standard-course factors.
 - `src/dashboard_template.html`, `dashboard.css`, `dashboard_app.js`,
-  `dashboard_ui.js` – inlined into one HTML file by `build_html()`
-  (`@@DASHBOARD_UI@@` places `dashboard_ui.js` inside the app script's scope).
+  `dashboard_explorer.js`, `dashboard_ui.js` – inlined into one HTML file by
+  `build_html()`; placeholders in `dashboard_app.js` put the explorer and UI
+  files inside the app script's scope (never write the placeholder text in
+  comments). `dashboard_explorer.js` is the Race Explorer (overview,
+  filters, ranks, athlete detail); `dashboard_ui.js` builds the workspace shell.
 - `data/reference/*.json` – hand-edited reference data (slots, standards, rule
   sets, cut-offs, calendar), loaded via `src/reference_data.py`.
 - `data/race_history/<EVENT>/*.csv` – one folder per event; the year comes from

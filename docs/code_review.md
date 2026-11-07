@@ -1,5 +1,23 @@
 # Code and data review
 
+## Review 2026-11-07b: Race Explorer redesign
+
+Descriptive statistics only; neither qualification objective changes.
+
+- The explorer opened on a long athlete table with no overview, no
+  sorting and only a name search. It now starts on a Race overview whose
+  histogram bars, age groups and countries drill into a filtered athlete
+  table (gender, age group, country, time range), sortable by any column,
+  with overall and age-group places and paged rendering (250 rows at a time
+  instead of every match). The median finish no longer assumes rows are
+  sorted by finish time.
+- An athlete panel shows split percentiles against the race-year field and
+  age group, the gap to the age-group median, and all results of that
+  athlete across races (matched by name, gender and country).
+- Shell: the workspace and view tabs are one sticky bar, the race picker sits
+  in the filter bar instead of above the tabs, the header is compact and
+  its subtitle summarises the race. Explorer filters are part of the share link.
+
 ## Review 2026-11-07: payload size, shared helpers, tooling
 
 Affects neither objective's results: the rebuilt datasets are identical to the

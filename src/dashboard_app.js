@@ -113,7 +113,8 @@
       const activeYears = selectedYears();
       return dataset().records.filter(row => row.overall >= lower && row.overall <= upper && activeYears.has(row.year))
         .filter(row => !query || `${row.name} ${row.country} ${row.division} ${row.bib}`.toLowerCase().includes(query))
-        .sort((a, b) => a.overall - b.overall || a.name.localeCompare(b.name));
+        .filter(explorerMatches)
+        .sort(explorerCompare);
     }
     function summaryRows(rows) {
       if (!rows.length) return `<tr><td colspan="4" class="empty">No finishers in this range.</td></tr>`;
@@ -125,13 +126,6 @@
         const averageMetric = metric(key, average);
         const averageText = averageMetric ? `${duration(average)} (${averageMetric})` : duration(average);
         return `<tr><td>${label}</td><td>${averageText} ± ${duration(sigma)}</td><td>${withMetric(key, Math.min(...values))}</td><td>${withMetric(key, Math.max(...values))}</td></tr>`;
-      }).join("");
-    }
-    function finisherRows(rows) {
-      if (!rows.length) return `<tr><td colspan="10" class="empty">Adjust the range or year filters to find finishers.</td></tr>`;
-      return rows.map(row => {
-        const bars = splits.map(([, key]) => `<span class="${key}" style="width:${100 * row[key] / row.overall}%"></span>`).join("");
-        return `<tr><td>${row.year}</td><td><strong>${escapeHtml(row.name)}</strong><br><small>${escapeHtml(row.country)} · #${escapeHtml(row.bib)}</small></td><td>${escapeHtml(row.division)}</td><td>${duration(row.overall)}</td><td><div class="split-bar">${bars}</div></td><td>${withMetric("swim", row.swim)}</td><td>${duration(row.t1)}</td><td>${withMetric("bike", row.bike)}</td><td>${duration(row.t2)}</td><td>${withMetric("run", row.run)}</td></tr>`;
       }).join("");
     }
     function median(values) {
@@ -707,7 +701,7 @@
       ], percent);
     }
     function updateTitle() {
-      const labels = { splits: "Split Explorer", qualification: "Qualification", odds: "Can I Qualify?", easiest: "Where Can I Qualify Most Easily?", overall: "Overall Times", statistics: "Race Statistics", compare: "Compare Races", kona: "Kona Qualification Trace", experimental: "Experimental", backtest: "Backtest", qyou: "You", qtime: "Your time", qdifficulty: "Race difficulty" };
+      const labels = { overview: "Race overview", splits: "Athletes & Splits", qualification: "Qualification", odds: "Can I Qualify?", easiest: "Where Can I Qualify Most Easily?", overall: "Overall Times", statistics: "Race Statistics", compare: "Compare Races", kona: "Kona Qualification Trace", experimental: "Experimental", backtest: "Backtest", qyou: "You", qtime: "Your time", qdifficulty: "Race difficulty" };
       const aggregateView = ["compare", "experimental", "backtest", "odds", "easiest", "kona", "qyou", "qtime", "qdifficulty"].includes(activeTab);
       document.querySelector(".event-control").hidden = aggregateView;
       document.getElementById("eventTitle").textContent = aggregateView ? labels[activeTab] : `${dataset().name} · ${labels[activeTab]}`;
@@ -2995,13 +2989,9 @@
       const rows = filteredData();
       document.getElementById("finisherCount").textContent = rows.length.toLocaleString();
       document.getElementById("rangeLabel").textContent = `${duration(lower)}–${duration(upper)}`;
-      const middle = Math.floor(rows.length / 2);
-      const median = rows.length % 2
-        ? rows[middle].overall
-        : (rows[middle - 1]?.overall + rows[middle]?.overall) / 2;
-      document.getElementById("medianFinish").textContent = rows.length ? duration(median) : "—";
+      document.getElementById("medianFinish").textContent = rows.length ? duration(explorerMedian(rows.map(row => row.overall))) : "—";
       document.getElementById("summaryBody").innerHTML = summaryRows(rows);
-      document.getElementById("finishersBody").innerHTML = finisherRows(rows);
+      renderExplorerFinishers(rows);
     }
     function downloadCsv() {
       const rows = filteredData();
@@ -3027,7 +3017,10 @@
         fromInput.value = current.default_from;
         toInput.value = current.default_to;
       }
+      populateExplorerFilters();
       render();
+      renderExplorerOverview();
+      renderExplorerAthlete();
       renderQualification();
       renderOverall();
       renderStatistics();
@@ -3157,10 +3150,12 @@
       if (control === oddsTime && !Number.isFinite(parseTime(oddsTime.value))) return;
       renderOdds();
     }));
+    @@DASHBOARD_EXPLORER@@
     @@DASHBOARD_UI@@
     selectEvent(true);
     initializeKonaTrace();
     renderCompare();
     renderOdds();
     renderExperimental();
+    initializeExplorer();
     initializeDashboardUI();

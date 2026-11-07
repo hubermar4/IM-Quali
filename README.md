@@ -55,8 +55,16 @@ Then open `http://localhost:8000/dashboard.html`.
 
 The dashboard preserves all original analyses in four workspaces:
 
-- **Race Explorer:** participation, finish-time distributions, athlete search,
-  split profiles, pace/speed and filtered CSV export.
+- **Race Explorer:** starts on a *Race overview* (latest-year figures with
+  change vs. the previous year, a finish-time histogram, median split per
+  year, age groups and countries). Every bar, age group and country opens
+  *Athletes & Splits* with matching filters (time range, gender, age group,
+  country, name). The athlete table sorts by any column, shows overall and
+  age-group places, loads 250 rows at a time and exports the filtered CSV.
+  Selecting an athlete shows split percentiles against the race-year field
+  and age group, and all their results in the data (matched by name, gender
+  and country). *Finish Times* and *Participation* keep the per-year tables
+  and charts. These are descriptive all-athlete statistics.
 - **Compare Races:** participation, distance-specific finish/split distributions,
   age-group depth and split contributions.
 - **Qualification:** a guided five-step flow.

@@ -12,13 +12,13 @@ const cutoffApproaches = [
 ];
 const qualificationSteps = ["qyou", "qtime", "qdifficulty", "qualification", "easiest"];
 const dashboardWorkspaces = {
-  explorer: {label: "Race Explorer", views: ["statistics", "overall", "splits"]},
+  explorer: {label: "Race Explorer", views: ["overview", "splits", "overall", "statistics"]},
   compare: {label: "Compare Races", views: ["compare"]},
   qualification: {label: "Qualification", views: qualificationSteps},
   course: {label: "Course Analysis", views: ["experimental", "backtest"]},
 };
 const dashboardViewLabels = {
-  statistics: "Participation", overall: "Finish Times", splits: "Athletes & Splits",
+  overview: "Race overview", splits: "Athletes & Splits", overall: "Finish Times", statistics: "Participation",
   compare: "Race Comparison", qyou: "1 · You", qtime: "2 · Your time", qdifficulty: "3 · Race difficulty",
   qualification: "4 · Qualification targets", easiest: "5 · Where to qualify",
   experimental: "Course & Conditions", backtest: "Backtest",
@@ -37,7 +37,7 @@ const contextControlIds = {
   ageGroup: ["qualificationAgeGroup", "oddsAgeGroup", "easiestAgeGroup", "compareImAgeGroup", "compare703AgeGroup", "compareScatterAgeGroup", "compareFieldAgeGroup", "konaAgeGroup"],
 };
 let activeWorkspace = "explorer";
-const workspaceLastView = {explorer: "splits", compare: "compare", qualification: "qyou", course: "experimental"};
+const workspaceLastView = {explorer: "overview", compare: "compare", qualification: "qyou", course: "experimental"};
 
 function renderContextYears() {
   const container = document.getElementById("contextYears");
@@ -113,8 +113,16 @@ function resetRollDownFactor() {
   renderSharedViews();
 }
 
+function raceSummaryText() {
+  const current = dataset();
+  const years = [...new Set(current.records.map(row => row.year))].sort();
+  const distance = current.group === "703" ? "IRONMAN 70.3" : "IRONMAN 140.6";
+  const status = current.qualifying === false ? "World Championship" : "qualifying race";
+  return `${distance} · ${status} · ${years.length} race years ${years[0] ?? ""}–${years.at(-1) ?? ""} · ${current.records.length.toLocaleString()} finishers`;
+}
+
 function updateDashboardScope() {
-  const allAthletes = ["splits", "overall", "statistics"].includes(activeTab);
+  const allAthletes = ["overview", "splits", "overall", "statistics"].includes(activeTab);
   const targetView = ["qualification", "easiest"].includes(activeTab);
   const isQualification = activeWorkspace === "qualification";
   const identityFields = document.querySelector(".context-fields:not(.assumption-fields)");
@@ -149,7 +157,7 @@ function updateDashboardScope() {
         ? "Your results are converted with course factors fitted on all race years; the year selection does not change them."
         : "Selected race years. Course models and personal-result calibration retain their full source scope.";
   document.getElementById("eventSubtitle").textContent = perRace
-    ? dataset().subtitle
+    ? raceSummaryText()
     : `${dashboardWorkspaces[activeWorkspace].label} / ${dashboardViewLabels[activeTab]}`;
   writeDashboardHash();
 }
@@ -1134,7 +1142,7 @@ function decorateDashboard() {
 
 // Shareable links: the URL hash records the view and the shared selections, so
 // a copied link reopens the same analysis. Unknown or invalid values are ignored.
-const dashboardHashKeys = ["view", "race", "distance", "gender", "ag", "rules", "cutoff", "factor", "fallback"];
+const dashboardHashKeys = ["view", "race", "distance", "gender", "ag", "rules", "cutoff", "factor", "fallback", "sex", "div", "ctry", "q", "from", "to"];
 let dashboardHashReady = false;
 
 function parseDashboardHash(hash, allowed) {
@@ -1155,6 +1163,16 @@ function parseDashboardHash(hash, allowed) {
   if (factor !== null && factor.trim() !== "" && Number.isFinite(Number(factor)) && Number(factor) >= 0) state.factor = Number(factor);
   if (params.get("fallback") === "1" || params.get("fallback") === "0") state.fallback = params.get("fallback") === "1";
   if (state.race && allowed.raceGroups?.[state.race]) state.distance = allowed.raceGroups[state.race];
+  // Race Explorer filters: values are checked against the selected race when applied.
+  pick("sex", ["Male", "Female"]);
+  for (const key of ["div", "ctry", "q"]) {
+    const value = params.get(key);
+    if (value && value.length <= 80) state[key] = value;
+  }
+  for (const key of ["from", "to"]) {
+    const value = params.get(key);
+    if (value && /^\d{1,2}:[0-5]\d:[0-5]\d$/.test(value)) state[key] = value;
+  }
   return state;
 }
 
@@ -1184,6 +1202,9 @@ function currentDashboardHash() {
     gender: dashboardContext.gender, ag: dashboardContext.ageGroup, rules: qualificationSystem,
     cutoff: qualificationAssumptions.mode, factor: qualificationAssumptions.rollDownFactor,
     fallback: qualificationAssumptions.fallback,
+    sex: explorerFilters.gender, div: explorerFilters.division, ctry: explorerFilters.country,
+    q: activeTab === "splits" ? searchInput.value.trim() : "",
+    from: activeTab === "splits" ? fromInput.value : "", to: activeTab === "splits" ? toInput.value : "",
   });
 }
 
@@ -1209,7 +1230,15 @@ function applyDashboardHash(hash) {
     updateRollDownFactorControl();
     syncDashboardContext("distance", state.distance || dataset().group);
     syncQualificationAssumptions();
-    if (state.view) activateDashboardView(state.view);
+    explorerFilters.gender = state.sex || "";
+    explorerFilters.division = state.div || "";
+    explorerFilters.country = state.ctry || "";
+    if (state.q !== undefined) searchInput.value = state.q;
+    if (state.from) fromInput.value = state.from;
+    if (state.to) toInput.value = state.to;
+    populateExplorerFilters();
+    render();
+    activateDashboardView(state.view || "overview");
   } finally {
     dashboardHashReady = true;
   }
@@ -1236,8 +1265,8 @@ function initializeDashboardUI() {
   const style = document.createElement("style");
   style.textContent = `
     .legacy-tabs {display:none} .workspace-tabs {margin-bottom:0}
-    .view-tabs {padding-top:0; margin-bottom:18px; background:#e5ebe7}
-    .context-bar {padding:14px 16px; background:#fff; border-bottom:1px solid var(--line); margin-bottom:4px}
+    .view-tabs {padding-top:0; margin-bottom:0; background:#e5ebe7}
+    .context-bar {padding:14px 16px; background:#fff; border:1px solid var(--line); border-top:0; margin-bottom:22px}
     .context-fields {display:flex; flex-wrap:wrap; gap:12px; align-items:end}
     .context-fields[hidden], .context-years[hidden], .chart-panel[hidden] {display:none}
     .context-fields label {min-width:110px} .context-bar .note {margin:10px 0 0}
@@ -1294,8 +1323,9 @@ function initializeDashboardUI() {
   document.head.append(style);
   document.querySelector("nav.tabs").classList.add("legacy-tabs");
   const nav = document.createElement("div");
-  nav.innerHTML = `<nav id="workspaceTabs" class="tabs workspace-tabs" role="tablist" aria-label="Workspaces"></nav>
-    <div class="context-bar"><div id="identityHome"><div class="context-fields" hidden>
+  nav.innerHTML = `<div class="nav-sticky"><nav id="workspaceTabs" class="tabs workspace-tabs" role="tablist" aria-label="Workspaces"></nav>
+    <nav id="viewTabs" class="tabs view-tabs" role="tablist" aria-label="Workspace views"></nav></div>
+    <div class="context-bar"><div id="eventControlHome"></div><div id="identityHome"><div class="context-fields" hidden>
       <label>Distance<select id="contextDistance"><option value="im">IRONMAN 140.6</option><option value="703">IRONMAN 70.3</option></select></label>
       <label class="context-gender">Gender<select id="contextGender"><option value="Male">Men</option><option value="Female">Women</option></select></label>
       <label class="context-age-group">Age group<select id="contextAgeGroup"></select></label>
@@ -1314,13 +1344,11 @@ function initializeDashboardUI() {
       <button type="button" class="context-action" data-years-action="none">None</button>
       <button type="button" class="context-action" data-years-action="reset">Reset</button>
       <div id="contextYears" class="context-years" style="margin:0"></div>
-      <button type="button" class="context-action" id="copyDashboardLink" title="Copy a link that reopens this view with the current selections">Copy link</button><span id="copyLinkStatus" class="note" role="status" aria-live="polite" style="margin:0"></span></div><p class="note" id="contextScope"></p></div>
-    <nav id="viewTabs" class="tabs view-tabs" role="tablist" aria-label="Workspace views"></nav>`;
+      <button type="button" class="context-action" id="copyDashboardLink" title="Copy a link that reopens this view with the current selections">Copy link</button><span id="copyLinkStatus" class="note" role="status" aria-live="polite" style="margin:0"></span></div><p class="note" id="contextScope"></p></div>`;
   document.querySelector(".legacy-tabs").before(nav);
-  const eventHome = document.createElement("div");
-  eventHome.id = "eventControlHome";
-  document.querySelector(".event-control").before(eventHome);
-  eventHome.append(document.querySelector(".event-control"));
+  // Sticky only works against a tall parent, so lift the tab bars out of the wrapper.
+  nav.before(nav.querySelector(".nav-sticky"));
+  document.getElementById("eventControlHome").append(document.querySelector(".event-control"));
   document.querySelectorAll(".tab-panel").forEach(panel => {
     panel.setAttribute("role", "tabpanel");
     panel.setAttribute("aria-labelledby", `view-${panel.id.replace("Panel", "")}`);
@@ -1558,5 +1586,8 @@ function initializeDashboardUI() {
   window.addEventListener("hashchange", () => {
     if (location.hash !== currentDashboardHash()) applyDashboardHash(location.hash);
   });
-  if (!applyDashboardHash(location.hash)) dashboardHashReady = true;
+  if (!applyDashboardHash(location.hash)) {
+    activateDashboardView("overview");
+    dashboardHashReady = true;
+  }
 }
