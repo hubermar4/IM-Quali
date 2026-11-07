@@ -110,6 +110,12 @@ cycles cannot silently borrow evidence; modified-course comparisons remain
 excluded. Reported minute values and density estimates retain approximate
 presentation.
 
+**Shareable links:** the address bar's `#…` part records the current view, race,
+distance, gender, age group, qualification approach, cutoff method, roll-down
+factor and strict-fallback setting. **Copy link** (beside the year buttons)
+copies it; opening the link restores the same analysis. Year selections and
+personal results stay in the browser and are not part of the link.
+
 The build inlines the dashboard template, CSS and JS files from `src/` into the HTML. No additional runtime
 script, framework or server is required beyond the existing sibling data file.
 

@@ -1,5 +1,32 @@
 # Code and data review
 
+## Review 2026-11-07: payload size, shared helpers, tooling
+
+Affects neither objective's results: the rebuilt datasets are identical to the
+previous build apart from last-digit floating-point noise in the backtest.
+
+- `dist/dashboard_data_im.js` was 91.5 MB against the 95 MB build limit (and
+  above GitHub's 50 MB warning). Finisher records are now stored as column
+  rows and the default Kona trace references `kona_traces` instead of
+  duplicating it: 68.0 MB (IM) and 12.9 MB (70.3), down from 91.5 / 20.7 MB.
+  The browser expands the payload on load; old payloads still load.
+- `qualification_full.py` and `qualification_703.py` duplicated row cleaning,
+  time parsing, winner selection, pool ranking and the official-flag check;
+  these now live in `qualification_common.py`. The 140.6 parser previously
+  did not accept `datetime.time` values, which the 70.3 parser did.
+- The default Kona trace and the cycle selector were hard-coded to 2026; they
+  now follow the latest available start list.
+- Explorer records filtered `Finish == "FIN"` without the trimming used
+  elsewhere; they now use `finishers_only` (no data change today).
+- Generated `dist/` files are written with LF so Windows and CI builds match.
+- `roll-down-approaches.instructions.md` had a stray duplicate `## 4.` heading
+  and a repeated paragraph.
+- Added: a test workflow on every push and pull request (the Pages workflow
+  built without testing), shareable dashboard links, and `CLAUDE.md`.
+
+Open: `dist/` data (~80 MB) is committed on every rebuild while CI also builds
+it, so the repository grows by roughly that much per data change.
+
 ## Review 2026-10-15b: Nice championship data and guided Qualification flow
 
 - `IM_Nice_WC` (men 2023/2025, women 2024) is a non-qualifying championship
