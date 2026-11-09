@@ -1,10 +1,28 @@
-pages:
-  image: python:3.12
+# GitLab CI: run the test suite and publish dist/ to GitLab Pages.
+# Mirrors .github/workflows/tests.yml and pages.yml.
+
+stages:
+  - test
+  - deploy
+
+default:
+  image: python:3.12-slim
+  before_script:
+    - python -m pip install --quiet -r requirements.txt
+
+tests:
+  stage: test
   script:
-    - pip install -r requirements.txt
+    # Node is needed for the UI tests (they are skipped without it).
+    - apt-get update -qq && apt-get install -y -qq nodejs > /dev/null
+    - python -m unittest discover -s tests
+
+pages:
+  stage: deploy
+  script:
     - python build.py
-    - mkdir -p public
-    - cp -r dist/. public/
+    # GitLab Pages serves the "public" directory.
+    - rm -rf public && cp -r dist public
   artifacts:
     paths:
       - public
